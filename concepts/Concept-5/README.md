@@ -114,9 +114,17 @@ Single-message mode:
 python scripts/cli.py --message "Create folder for my finances" --confirm
 ```
 
-## Dev Web Terminal (raw container access + BrainDrive CLI)
+## Dev Web Terminal (isolated container + BrainDrive CLI)
 
 This is a separate, dev-only browser terminal service with basic auth.
+
+Isolation model:
+
+1. No project workspace bind mount is exposed to this container.
+2. It communicates with BrainDrive services over HTTP (`node-router` and `intent-router-natural-language`).
+3. It mounts only:
+   - `./data/runtime/dev-webterm` (CLI history/session-local runtime files)
+   - `./data/library` read-only
 
 Behavior:
 
@@ -131,7 +139,7 @@ python -u scripts/cli.py
 Enable and start it:
 
 ```bash
-cd /home/hacker/Projects/BrainDrive-Protocal/Concept_Containers/Concept-5
+cd /home/hacker/Projects/BrainDrive-Labs/braindrive-concepts-lab/concepts/Concept-5
 docker compose --profile dev up -d --build dev-web-terminal
 ```
 

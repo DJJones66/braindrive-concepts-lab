@@ -7,6 +7,7 @@ from .memory_fs import MemoryFsNode
 from .model_ollama import OllamaModelNode
 from .model_openrouter import OpenRouterModelNode
 from .runtime_bootstrap import RuntimeBootstrapNode
+from .session_state import SessionStateNode
 from .scrapling import ScraplingNode
 from .skill import SkillWorkflowNode
 from .web_console import WebConsoleNode
@@ -21,6 +22,7 @@ __all__ = [
     "OpenRouterModelNode",
     "OllamaModelNode",
     "RuntimeBootstrapNode",
+    "SessionStateNode",
     "ScraplingNode",
     "SkillWorkflowNode",
     "WebConsoleNode",

@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Tuple
 from ..config import ConfigResolver
 from ..protocol import make_error, make_response, new_uuid, now_iso
 from .base import ProtocolNode, cap
-from .llm_driver import LLMSkillDriver, read_context_doc
+from .llm_driver import LLMSkillDriver
 
 MIN_INTERVIEW_ANSWERS = 5
 MAX_INTERVIEW_HISTORY_CHARS = 24000
@@ -461,10 +461,61 @@ class SkillWorkflowNode(ProtocolNode):
             payload["error"] = {"code": error_code}
         self.ctx.persistence.emit_event("workflow", event_type, payload)
 
-    def _active_folder(self) -> str:
-        if self.ctx.workflow_state is None:
+    def _route(self, intent: str, payload: Dict[str, Any], extensions: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        if self.ctx.route_message is None:
+            return {}
+        message: Dict[str, Any] = {
+            "protocol_version": "0.1",
+            "message_id": new_uuid(),
+            "intent": intent,
+            "payload": payload,
+        }
+        if extensions:
+            message["extensions"] = extensions
+        response = self.ctx.route_message(message)
+        return response if isinstance(response, dict) else {}
+
+    @staticmethod
+    def _default_interview_state() -> Dict[str, Any]:
+        return {"status": "idle", "answers": [], "question_index": 0, "asked_questions": []}
+
+    @staticmethod
+    def _internal_approved_extensions() -> Dict[str, Any]:
+        return {
+            "confirmation": {
+                "required": True,
+                "status": "approved",
+                "request_id": f"internal-{new_uuid()}",
+            }
+        }
+
+    def _memory_read(self, path: str) -> str:
+        response = self._route("memory.read", {"path": path})
+        if response.get("intent") != "memory.read.result":
             return ""
-        return str(self.ctx.workflow_state.read("active_folder", ""))
+        payload = response.get("payload", {})
+        if not isinstance(payload, dict):
+            return ""
+        content = payload.get("content", "")
+        return content if isinstance(content, str) else ""
+
+    def _memory_write(self, path: str, content: str) -> bool:
+        response = self._route(
+            "memory.write.propose",
+            {"path": path, "content": content},
+            extensions=self._internal_approved_extensions(),
+        )
+        return response.get("intent") == "memory.write.applied"
+
+    def _active_folder(self) -> str:
+        response = self._route("session.active_folder.get", {})
+        if response.get("intent") == "session.active_folder":
+            payload = response.get("payload", {})
+            if isinstance(payload, dict):
+                active = payload.get("active_folder", "")
+                if isinstance(active, str):
+                    return active.strip()
+        return ""
 
     def _folder_from_payload_context(self, payload: Dict[str, Any]) -> str:
         context = payload.get("context", {})
@@ -476,74 +527,39 @@ class SkillWorkflowNode(ProtocolNode):
         return folder.strip()
 
     def _load_interview(self, folder: str) -> Dict[str, Any]:
-        if self.ctx.workflow_state is None:
-            return {"status": "idle", "answers": [], "question_index": 0, "asked_questions": []}
-
-        state = self.ctx.workflow_state.get()
-        interviews = state.get("interviews", {})
-        if not isinstance(interviews, dict):
-            return {"status": "idle", "answers": [], "question_index": 0, "asked_questions": []}
-
-        item = interviews.get(folder)
-        if not isinstance(item, dict):
-            return {"status": "idle", "answers": [], "question_index": 0, "asked_questions": []}
-        return item
+        response = self._route("session.interview.get", {"folder": folder})
+        if response.get("intent") == "session.interview":
+            payload = response.get("payload", {})
+            if isinstance(payload, dict):
+                interview = payload.get("interview", {})
+                if isinstance(interview, dict):
+                    return interview
+        return self._default_interview_state()
 
     def _save_interview(self, folder: str, interview: Dict[str, Any]) -> None:
-        if self.ctx.workflow_state is None:
+        response = self._route("session.interview.put", {"folder": folder, "interview": interview})
+        if response.get("intent") == "session.interview.updated":
             return
-
-        def _mutate(state: Dict[str, Any]) -> None:
-            interviews = state.setdefault("interviews", {})
-            if not isinstance(interviews, dict):
-                state["interviews"] = {}
-                interviews = state["interviews"]
-            interviews[folder] = interview
-
-        self.ctx.workflow_state.mutate(_mutate)
 
     def _save_skill_session(self, *, skill_id: str, folder: str, session: Dict[str, Any]) -> None:
-        if self.ctx.workflow_state is None:
+        response = self._route(
+            "session.skill_session.put",
+            {"skill_id": skill_id, "folder": folder, "session": session},
+        )
+        if response.get("intent") == "session.skill_session.updated":
             return
-
-        def _mutate(state: Dict[str, Any]) -> None:
-            sessions = state.setdefault("skill_sessions", {})
-            if not isinstance(sessions, dict):
-                state["skill_sessions"] = {}
-                sessions = state["skill_sessions"]
-            by_skill = sessions.setdefault(skill_id, {})
-            if not isinstance(by_skill, dict):
-                sessions[skill_id] = {}
-                by_skill = sessions[skill_id]
-            by_skill[folder] = session
-
-        self.ctx.workflow_state.mutate(_mutate)
 
     def _save_skill_output(self, *, skill_id: str, folder: str, output: Dict[str, Any]) -> None:
-        if self.ctx.workflow_state is None:
+        response = self._route(
+            "session.skill_output.put",
+            {"skill_id": skill_id, "folder": folder, "output": output},
+        )
+        if response.get("intent") == "session.skill_output.updated":
             return
 
-        def _mutate(state: Dict[str, Any]) -> None:
-            outputs = state.setdefault("skill_outputs", {})
-            if not isinstance(outputs, dict):
-                state["skill_outputs"] = {}
-                outputs = state["skill_outputs"]
-            by_skill = outputs.setdefault(skill_id, {})
-            if not isinstance(by_skill, dict):
-                outputs[skill_id] = {}
-                by_skill = outputs[skill_id]
-            by_skill[folder] = output
-
-        self.ctx.workflow_state.mutate(_mutate)
-
     def _append_interview_session_history(self, folder: str, interview: Dict[str, Any], summary: str) -> None:
-        log_path = self.ctx.library_root / folder / "interview.md"
-        if not log_path.parent.exists():
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-
-        existing = ""
-        if log_path.exists() and log_path.is_file():
-            existing = log_path.read_text(encoding="utf-8")
+        path = f"{folder}/interview.md"
+        existing = self._memory_read(path)
 
         answers = interview.get("answers", [])
         if not isinstance(answers, list):
@@ -585,12 +601,11 @@ class SkillWorkflowNode(ProtocolNode):
         lines.append("---")
         lines.append("")
 
-        with log_path.open("a", encoding="utf-8") as handle:
-            handle.write("\n".join(lines))
+        content = existing + "\n".join(lines)
+        if not self._memory_write(path, content):
+            raise OSError("failed to persist interview history through memory node")
 
     def _save_interview_history_entry(self, folder: str, interview: Dict[str, Any]) -> None:
-        if self.ctx.workflow_state is None:
-            return
         session = {
             "session_id": str(interview.get("session_id", "")).strip(),
             "started_at": str(interview.get("started_at", "")).strip(),
@@ -598,19 +613,16 @@ class SkillWorkflowNode(ProtocolNode):
             "answers": interview.get("answers", []),
             "summary": str(interview.get("summary", "")).strip(),
         }
+        response = self._route(
+            "session.interview_history.append",
+            {"folder": folder, "session": session},
+        )
+        if response.get("intent") == "session.interview_history.appended":
+            return
 
-        def _mutate(state: Dict[str, Any]) -> None:
-            history = state.setdefault("interview_history", {})
-            if not isinstance(history, dict):
-                state["interview_history"] = {}
-                history = state["interview_history"]
-            entries = history.setdefault(folder, [])
-            if not isinstance(entries, list):
-                history[folder] = []
-                entries = history[folder]
-            entries.append(session)
-
-        self.ctx.workflow_state.mutate(_mutate)
+    def _agent_context(self, folder: str) -> str:
+        text = self._memory_read(f"{folder}/AGENT.md")
+        return text if text else "No AGENT.md context available."
 
     @staticmethod
     def _first_question_line(text: str) -> str:
@@ -643,9 +655,7 @@ class SkillWorkflowNode(ProtocolNode):
         if not transcript:
             transcript = "No prior Q/A."
 
-        agent_text = read_context_doc(self.ctx.library_root / folder / "AGENT.md")
-        if not agent_text:
-            agent_text = "No AGENT.md context available."
+        agent_text = self._agent_context(folder)
 
         return (
             f"{skill}\n\n"
@@ -674,34 +684,19 @@ class SkillWorkflowNode(ProtocolNode):
         )
 
     def _interview_answers(self, folder: str) -> List[Dict[str, Any]]:
-        if self.ctx.workflow_state is None:
-            return []
-        interviews = self.ctx.workflow_state.read("interviews", {})
-        if not isinstance(interviews, dict):
-            return []
-        interview = interviews.get(folder)
-        if not isinstance(interview, dict):
-            return []
+        interview = self._load_interview(folder)
         answers = interview.get("answers", [])
         return [item for item in answers if isinstance(item, dict)] if isinstance(answers, list) else []
 
     def _interview_summary(self, folder: str) -> str:
-        if self.ctx.workflow_state is None:
-            return ""
-        interviews = self.ctx.workflow_state.read("interviews", {})
-        if not isinstance(interviews, dict):
-            return ""
-        interview = interviews.get(folder)
-        if not isinstance(interview, dict):
-            return ""
+        interview = self._load_interview(folder)
         value = interview.get("summary", "")
         return str(value).strip() if value is not None else ""
 
     def _interview_history_markdown(self, folder: str) -> str:
-        path = self.ctx.library_root / folder / "interview.md"
-        if not path.exists() or not path.is_file():
+        text = self._memory_read(f"{folder}/interview.md")
+        if not text:
             return ""
-        text = path.read_text(encoding="utf-8")
         if len(text) <= MAX_INTERVIEW_HISTORY_CHARS:
             return text
         return (
@@ -710,29 +705,23 @@ class SkillWorkflowNode(ProtocolNode):
         )
 
     def _save_generated_spec(self, folder: str, markdown: str) -> None:
-        if self.ctx.workflow_state is None:
+        response = self._route("session.generated_spec.put", {"folder": folder, "markdown": markdown})
+        if response.get("intent") == "session.generated_spec.updated":
             return
 
-        def _mutate(state: Dict[str, Any]) -> None:
-            generated = state.setdefault("generated_specs", {})
-            if not isinstance(generated, dict):
-                state["generated_specs"] = {}
-                generated = state["generated_specs"]
-            generated[folder] = markdown
-
-        self.ctx.workflow_state.mutate(_mutate)
-
     def _spec_text(self, folder: str) -> str:
-        path = self.ctx.library_root / folder / "spec.md"
-        if not path.exists() or not path.is_file():
-            if self.ctx.workflow_state is None:
-                return ""
-            generated = self.ctx.workflow_state.read("generated_specs", {})
-            if not isinstance(generated, dict):
-                return ""
-            value = generated.get(folder, "")
-            return str(value) if value is not None else ""
-        return path.read_text(encoding="utf-8")
+        spec_text = self._memory_read(f"{folder}/spec.md")
+        if spec_text:
+            return spec_text
+
+        response = self._route("session.generated_spec.get", {"folder": folder})
+        if response.get("intent") == "session.generated_spec":
+            payload = response.get("payload", {})
+            if isinstance(payload, dict):
+                value = payload.get("markdown", "")
+                if isinstance(value, str):
+                    return value
+        return ""
 
     def _build_spec_prompt(self, *, folder: str, skill: str, answers: List[Dict[str, Any]], summary: str) -> str:
         answers_block = "\n".join(
@@ -741,9 +730,7 @@ class SkillWorkflowNode(ProtocolNode):
         if not answers_block:
             answers_block = "- No interview answers available."
 
-        agent_text = read_context_doc(self.ctx.library_root / folder / "AGENT.md")
-        if not agent_text:
-            agent_text = "No AGENT.md context available."
+        agent_text = self._agent_context(folder)
         if not summary:
             summary = "No interview summary available."
         history_markdown = self._interview_history_markdown(folder)

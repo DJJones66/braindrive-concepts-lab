@@ -14,8 +14,8 @@ services:
       ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-braindrive-mvp-dev-token}"
       ROUTER_NODE_TIMEOUT_SEC: "${ROUTER_NODE_TIMEOUT_SEC:-180}"
       BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
-      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
-      BRAINDRIVE_USER_CONFIG_PATH: /workspace/data/runtime/user-config.yaml
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime/router
+      BRAINDRIVE_USER_CONFIG_PATH: /workspace/data/runtime/router/user-config.yaml
       BRAINDRIVE_DEFAULT_PROVIDER: "${BRAINDRIVE_DEFAULT_PROVIDER:-openrouter}"
       BRAINDRIVE_OPENROUTER_API_KEY: "${BRAINDRIVE_OPENROUTER_API_KEY:-}"
       BRAINDRIVE_OPENROUTER_BASE_URL: "${BRAINDRIVE_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
@@ -25,7 +25,8 @@ services:
       BRAINDRIVE_OLLAMA_DEFAULT_MODEL: "${BRAINDRIVE_OLLAMA_DEFAULT_MODEL:-llama3:8b}"
       BRAINDRIVE_MODEL_TIMEOUT_SEC: "${BRAINDRIVE_MODEL_TIMEOUT_SEC:-180}"
     volumes:
-      - ./:/workspace
+      - ./data/runtime:/workspace/data/runtime
+      - ./data/library:/workspace/data/library:ro
     ports:
       - "${BRAINDRIVE_ROUTER_PORT:-9480}:8080"
 
@@ -43,10 +44,11 @@ services:
       INTENT_ROUTER_CATALOG_TIMEOUT_SEC: "${INTENT_ROUTER_CATALOG_TIMEOUT_SEC:-5}"
       INTENT_ROUTER_ROUTE_TIMEOUT_SEC: "${INTENT_ROUTER_ROUTE_TIMEOUT_SEC:-240}"
       BRAINDRIVE_ENABLE_TEST_ENDPOINTS: "${BRAINDRIVE_ENABLE_TEST_ENDPOINTS:-false}"
-      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime/intent-router
       BRAINDRIVE_WORKFLOW_FULL_TRACE: "${BRAINDRIVE_WORKFLOW_FULL_TRACE:-true}"
     volumes:
-      - ./:/workspace
+      - ./data/runtime:/workspace/data/runtime
+      - ./data/library:/workspace/data/library:ro
     ports:
       - "${BRAINDRIVE_INTENT_PORT:-9481}:8081"
     depends_on:
@@ -58,7 +60,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /workspace
     user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
-    command: ["python", "-u", "services/node_service.py"]
+    command: ["python", "-u", "services/node_runtime_bootstrap_service.py"]
     environment:
       PYTHONPATH: /workspace
       NODE_KIND: runtime_bootstrap
@@ -69,9 +71,10 @@ services:
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
       BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
-      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime/runtime-bootstrap
     volumes:
-      - ./:/workspace
+      - ./data/runtime:/workspace/data/runtime
+      - ./data/library:/workspace/data/library
     depends_on:
       - node-router
 
@@ -81,7 +84,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /workspace
     user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
-    command: ["python", "-u", "services/node_service.py"]
+    command: ["python", "-u", "services/node_memory_fs_service.py"]
     environment:
       PYTHONPATH: /workspace
       NODE_KIND: memory_fs
@@ -92,9 +95,34 @@ services:
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
       BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
-      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime/memory-fs
     volumes:
-      - ./:/workspace
+      - ./data/runtime:/workspace/data/runtime
+      - ./data/library:/workspace/data/library
+    depends_on:
+      - node-router
+
+  node-session-state:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
+    command: ["python", "-u", "services/node_session_state_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      NODE_KIND: session_state
+      NODE_PORT: "8124"
+      NODE_ENDPOINT_URL: http://node-session-state:8124/bdp
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-braindrive-mvp-dev-token}"
+      ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
+      ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
+      ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
+      BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime/session-state
+    volumes:
+      - ./data/runtime:/workspace/data/runtime
+      - ./data/library:/workspace/data/library:ro
     depends_on:
       - node-router
 
@@ -104,7 +132,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /workspace
     user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
-    command: ["python", "-u", "services/node_service.py"]
+    command: ["python", "-u", "services/node_workflow_folder_service.py"]
     environment:
       PYTHONPATH: /workspace
       NODE_KIND: folder
@@ -115,9 +143,10 @@ services:
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
       BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
-      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime/workflow-folder
     volumes:
-      - ./:/workspace
+      - ./data/runtime:/workspace/data/runtime
+      - ./data/library:/workspace/data/library
     depends_on:
       - node-router
 
@@ -127,7 +156,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /workspace
     user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
-    command: ["python", "-u", "services/node_service.py"]
+    command: ["python", "-u", "services/node_workflow_skill_service.py"]
     environment:
       PYTHONPATH: /workspace
       NODE_KIND: skill
@@ -138,13 +167,14 @@ services:
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
       BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
-      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
-      BRAINDRIVE_USER_CONFIG_PATH: /workspace/data/runtime/user-config.yaml
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime/workflow-skill
+      BRAINDRIVE_USER_CONFIG_PATH: /workspace/data/runtime/workflow-skill/user-config.yaml
       BRAINDRIVE_DEFAULT_PROVIDER: "${BRAINDRIVE_DEFAULT_PROVIDER:-openrouter}"
       BRAINDRIVE_OPENROUTER_DEFAULT_MODEL: "${BRAINDRIVE_OPENROUTER_DEFAULT_MODEL:-}"
       BRAINDRIVE_OLLAMA_DEFAULT_MODEL: "${BRAINDRIVE_OLLAMA_DEFAULT_MODEL:-}"
     volumes:
-      - ./:/workspace
+      - ./data/runtime:/workspace/data/runtime
+      - ./data/library:/workspace/data/library:ro
     depends_on:
       - node-router
 
@@ -154,7 +184,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /workspace
     user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
-    command: ["python", "-u", "services/node_service.py"]
+    command: ["python", "-u", "services/node_approval_gate_service.py"]
     environment:
       PYTHONPATH: /workspace
       NODE_KIND: approval_gate
@@ -165,9 +195,10 @@ services:
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
       BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
-      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime/approval-gate
     volumes:
-      - ./:/workspace
+      - ./data/runtime:/workspace/data/runtime
+      - ./data/library:/workspace/data/library:ro
     depends_on:
       - node-router
 
@@ -177,7 +208,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /workspace
     user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
-    command: ["python", "-u", "services/node_service.py"]
+    command: ["python", "-u", "services/node_git_ops_service.py"]
     environment:
       PYTHONPATH: /workspace
       NODE_KIND: git_ops
@@ -188,9 +219,10 @@ services:
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
       BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
-      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime/git-ops
     volumes:
-      - ./:/workspace
+      - ./data/runtime:/workspace/data/runtime
+      - ./data/library:/workspace/data/library
     depends_on:
       - node-router
 
@@ -200,7 +232,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /workspace
     user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
-    command: ["python", "-u", "services/node_service.py"]
+    command: ["python", "-u", "services/node_model_openrouter_service.py"]
     environment:
       PYTHONPATH: /workspace
       NODE_KIND: model_openrouter
@@ -211,7 +243,7 @@ services:
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
       BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
-      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime/model-openrouter
       BRAINDRIVE_OPENROUTER_API_KEY: "${BRAINDRIVE_OPENROUTER_API_KEY:-}"
       BRAINDRIVE_OPENROUTER_BASE_URL: "${BRAINDRIVE_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
       BRAINDRIVE_OPENROUTER_DEFAULT_MODEL: "${BRAINDRIVE_OPENROUTER_DEFAULT_MODEL:-}"
@@ -219,7 +251,8 @@ services:
       BRAINDRIVE_OPENROUTER_APP_NAME: "${BRAINDRIVE_OPENROUTER_APP_NAME:-BrainDrive-MVP}"
       BRAINDRIVE_MODEL_TIMEOUT_SEC: "${BRAINDRIVE_MODEL_TIMEOUT_SEC:-180}"
     volumes:
-      - ./:/workspace
+      - ./data/runtime:/workspace/data/runtime
+      - ./data/library:/workspace/data/library:ro
     depends_on:
       - node-router
 
@@ -229,7 +262,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /workspace
     user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
-    command: ["python", "-u", "services/node_service.py"]
+    command: ["python", "-u", "services/node_model_ollama_service.py"]
     environment:
       PYTHONPATH: /workspace
       NODE_KIND: model_ollama
@@ -240,13 +273,14 @@ services:
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
       BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
-      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime/model-ollama
       BRAINDRIVE_OLLAMA_BASE_URL: "${BRAINDRIVE_OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}"
       BRAINDRIVE_OLLAMA_API_KEY: "${BRAINDRIVE_OLLAMA_API_KEY:-}"
       BRAINDRIVE_OLLAMA_DEFAULT_MODEL: "${BRAINDRIVE_OLLAMA_DEFAULT_MODEL:-llama3:8b}"
       BRAINDRIVE_MODEL_TIMEOUT_SEC: "${BRAINDRIVE_MODEL_TIMEOUT_SEC:-180}"
     volumes:
-      - ./:/workspace
+      - ./data/runtime:/workspace/data/runtime
+      - ./data/library:/workspace/data/library:ro
     depends_on:
       - node-router
 
@@ -256,7 +290,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /workspace
     user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
-    command: ["python", "-u", "services/node_service.py"]
+    command: ["python", "-u", "services/node_chat_general_service.py"]
     environment:
       PYTHONPATH: /workspace
       NODE_KIND: chat_general
@@ -267,9 +301,10 @@ services:
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
       BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
-      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime/chat-general
     volumes:
-      - ./:/workspace
+      - ./data/runtime:/workspace/data/runtime
+      - ./data/library:/workspace/data/library:ro
     depends_on:
       - node-router
 
@@ -279,7 +314,7 @@ services:
       dockerfile: Dockerfile.scrapling
     working_dir: /workspace
     user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
-    command: ["python", "-u", "services/node_service.py"]
+    command: ["python", "-u", "services/node_web_scrapling_service.py"]
     environment:
       PYTHONPATH: /workspace
       NODE_KIND: scrapling
@@ -290,7 +325,7 @@ services:
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
       BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
-      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime/web-scrapling
       BRAINDRIVE_SCRAPLING_ENABLED: "${BRAINDRIVE_SCRAPLING_ENABLED:-true}"
       BRAINDRIVE_SCRAPLING_ALLOW_PRIVATE_NET: "${BRAINDRIVE_SCRAPLING_ALLOW_PRIVATE_NET:-false}"
       BRAINDRIVE_SCRAPLING_ALLOWED_DOMAINS: "${BRAINDRIVE_SCRAPLING_ALLOWED_DOMAINS:-}"
@@ -303,7 +338,8 @@ services:
       BRAINDRIVE_SCRAPLING_DEFAULT_SAVE: "${BRAINDRIVE_SCRAPLING_DEFAULT_SAVE:-true}"
       BRAINDRIVE_SCRAPLING_DEFAULT_SAVE_DIR: "${BRAINDRIVE_SCRAPLING_DEFAULT_SAVE_DIR:-scraping}"
     volumes:
-      - ./:/workspace
+      - ./data/runtime:/workspace/data/runtime
+      - ./data/library:/workspace/data/library
     depends_on:
       - node-router
 
@@ -313,7 +349,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /workspace
     user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
-    command: ["python", "-u", "services/node_service.py"]
+    command: ["python", "-u", "services/node_web_console_service.py"]
     environment:
       PYTHONPATH: /workspace
       NODE_KIND: web_console
@@ -324,7 +360,7 @@ services:
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
       BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
-      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime/web-console
       WEBTERM_ENABLED: "${WEBTERM_ENABLED:-true}"
       WEBTERM_ALLOWED_ORIGINS: "${WEBTERM_ALLOWED_ORIGINS:-https://localhost:8443}"
       WEBTERM_SESSION_IDLE_TIMEOUT_SEC: "${WEBTERM_SESSION_IDLE_TIMEOUT_SEC:-900}"
@@ -332,7 +368,7 @@ services:
       WEBTERM_MAX_CONCURRENT_SESSIONS_PER_USER: "${WEBTERM_MAX_CONCURRENT_SESSIONS_PER_USER:-2}"
       WEBTERM_MAX_MESSAGE_BYTES: "${WEBTERM_MAX_MESSAGE_BYTES:-4096}"
       WEBTERM_MAX_EVENTS_PER_MINUTE: "${WEBTERM_MAX_EVENTS_PER_MINUTE:-120}"
-      WEBTERM_TARGETS: "${WEBTERM_TARGETS:-node-router,node-memory-fs,node-workflow-folder,node-workflow-skill,node-chat-general}"
+      WEBTERM_TARGETS: "${WEBTERM_TARGETS:-node-router,node-memory-fs,node-session-state,node-workflow-folder,node-workflow-skill,node-chat-general}"
       WEBTERM_SSH_GATEWAY_HOST: "${WEBTERM_SSH_GATEWAY_HOST:-ssh-gateway}"
       WEBTERM_SSH_GATEWAY_PORT: "${WEBTERM_SSH_GATEWAY_PORT:-2226}"
       WEBTERM_SSH_TARGET_DEFAULT: "${WEBTERM_SSH_TARGET_DEFAULT:-node-router}"
@@ -350,7 +386,8 @@ services:
       WEBTERM_ROUTER_BASE_URL: "${WEBTERM_ROUTER_BASE_URL:-http://node-router:8080}"
       WEBTERM_HTTP_TIMEOUT_SEC: "${WEBTERM_HTTP_TIMEOUT_SEC:-60}"
     volumes:
-      - ./:/workspace
+      - ./data/runtime:/workspace/data/runtime
+      - ./data/library:/workspace/data/library:ro
     ports:
       - "${BRAINDRIVE_WEBCONSOLE_PORT:-9493}:8133"
     depends_on:
@@ -368,6 +405,9 @@ services:
       PYTHONPATH: /workspace
       BRAINDRIVE_ROUTER_BASE: "http://node-router:8080"
       BRAINDRIVE_INTENT_BASE: "http://intent-router-natural-language:8081"
+      BRAINDRIVE_RUNTIME_DIR: "/workspace/data/runtime"
+      BRAINDRIVE_LIBRARY_ROOT: "/workspace/data/library"
+      BRAINDRIVE_CLI_HISTORY_FILE: "/workspace/data/runtime/state/.cli_history"
       BRAINDRIVE_CLI_TIMEOUT_SEC: "${BRAINDRIVE_CLI_TIMEOUT_SEC:-300}"
       BRAINDRIVE_CLI_COLOR: "${BRAINDRIVE_CLI_COLOR:-auto}"
       BRAINDRIVE_CLI_STREAM_MODEL_CHAT: "${BRAINDRIVE_CLI_STREAM_MODEL_CHAT:-true}"
@@ -378,7 +418,8 @@ services:
       DEV_WEBTERM_LOG_LEVEL: "${DEV_WEBTERM_LOG_LEVEL:-2}"
       DEV_WEBTERM_PORT_INTERNAL: "7681"
     volumes:
-      - ./:/workspace
+      - ./data/runtime/dev-webterm:/workspace/data/runtime
+      - ./data/library:/workspace/data/library:ro
     ports:
       - "${BRAINDRIVE_DEV_WEBTERM_BIND_ADDR:-0.0.0.0}:${BRAINDRIVE_DEV_WEBTERM_PORT:-9494}:7681"
     depends_on:
@@ -391,7 +432,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /workspace
     user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
-    command: ["python", "-u", "services/node_service.py"]
+    command: ["python", "-u", "services/node_audit_log_service.py"]
     environment:
       PYTHONPATH: /workspace
       NODE_KIND: audit_log
@@ -402,8 +443,9 @@ services:
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
       BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
-      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime/audit-log
     volumes:
-      - ./:/workspace
+      - ./data/runtime:/workspace/data/runtime
+      - ./data/library:/workspace/data/library:ro
     depends_on:
       - node-router

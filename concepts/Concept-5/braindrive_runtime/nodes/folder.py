@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List
 
-from ..protocol import make_error, make_response
+from ..protocol import make_error, make_response, new_uuid
 from .base import ProtocolNode, cap
 
 
@@ -49,14 +49,31 @@ class FolderWorkflowNode(ProtocolNode):
             ),
         ]
 
-    def _state(self) -> Dict[str, Any]:
-        if self.ctx.workflow_state is None:
-            return {"active_folder": ""}
-        return self.ctx.workflow_state.get()
+    def _route_session(self, intent: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self.ctx.route_message is None:
+            return {}
+        return self.ctx.route_message(
+            {
+                "protocol_version": "0.1",
+                "message_id": str(new_uuid()),
+                "intent": intent,
+                "payload": payload,
+            }
+        )
 
-    def _update_state(self, patch: Dict[str, Any]) -> None:
-        if self.ctx.workflow_state is not None:
-            self.ctx.workflow_state.update(patch)
+    def _active_folder(self) -> str:
+        if self.ctx.route_message is not None:
+            response = self._route_session("session.active_folder.get", {})
+            if isinstance(response, dict) and response.get("intent") == "session.active_folder":
+                payload = response.get("payload", {})
+                if isinstance(payload, dict):
+                    value = payload.get("active_folder", "")
+                    if isinstance(value, str):
+                        return value
+        return ""
+
+    def _set_active_folder(self, folder: str) -> None:
+        self._route_session("session.active_folder.set", {"active_folder": folder})
 
     def _slug(self, text: str) -> str:
         slug = re.sub(r"[^a-zA-Z0-9\-_\s]", "", text.strip().lower())
@@ -92,7 +109,7 @@ class FolderWorkflowNode(ProtocolNode):
                 "folder.listed",
                 {
                     "folders": self._folders(),
-                    "active_folder": self._state().get("active_folder", ""),
+                    "active_folder": self._active_folder(),
                 },
                 message.get("message_id"),
             )
@@ -111,7 +128,7 @@ class FolderWorkflowNode(ProtocolNode):
                     details={"folders": self._folders()},
                 )
 
-            self._update_state({"active_folder": folder})
+            self._set_active_folder(folder)
             return make_response(
                 "folder.switched",
                 {
@@ -148,7 +165,7 @@ class FolderWorkflowNode(ProtocolNode):
                     encoding="utf-8",
                 )
 
-            self._update_state({"active_folder": folder})
+            self._set_active_folder(folder)
             return make_response(
                 "folder.created",
                 {

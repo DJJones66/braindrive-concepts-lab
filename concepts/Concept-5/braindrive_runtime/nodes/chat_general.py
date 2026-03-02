@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Any, Dict, List
 
-from ..protocol import make_error, make_response
+from ..protocol import make_error, make_response, new_uuid
 from .base import ProtocolNode, cap
 
 
@@ -47,6 +47,42 @@ class ChatGeneralNode(ProtocolNode):
             ),
         ]
 
+    def _route(self, intent: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self.ctx.route_message is None:
+            return {}
+        return self.ctx.route_message(
+            {
+                "protocol_version": "0.1",
+                "message_id": new_uuid(),
+                "intent": intent,
+                "payload": payload,
+            }
+        )
+
+    def _active_folder(self) -> str:
+        if self.ctx.route_message is not None:
+            response = self._route("session.active_folder.get", {})
+            if response.get("intent") == "session.active_folder":
+                payload = response.get("payload", {})
+                if isinstance(payload, dict):
+                    value = payload.get("active_folder", "")
+                    if isinstance(value, str):
+                        return value
+        return ""
+
+    def _read_plan(self, active_folder: str) -> str:
+        if not active_folder:
+            return ""
+        if self.ctx.route_message is not None:
+            response = self._route("memory.read", {"path": f"{active_folder}/plan.md"})
+            if response.get("intent") == "memory.read.result":
+                payload = response.get("payload", {})
+                if isinstance(payload, dict):
+                    content = payload.get("content", "")
+                    if isinstance(content, str):
+                        return content
+        return ""
+
     def handle(self, message: Dict[str, Any]) -> Dict[str, Any]:
         intent = message.get("intent")
 
@@ -69,12 +105,11 @@ class ChatGeneralNode(ProtocolNode):
         text = str(message.get("payload", {}).get("text", ""))
         lowered = text.lower()
 
-        if "what next" in lowered and self.ctx.workflow_state is not None:
-            active_folder = str(self.ctx.workflow_state.read("active_folder", ""))
+        if "what next" in lowered:
+            active_folder = self._active_folder()
             if active_folder:
-                plan_path = self.ctx.library_root / active_folder / "plan.md"
-                if plan_path.exists() and plan_path.is_file():
-                    plan_text = plan_path.read_text(encoding="utf-8")
+                plan_text = self._read_plan(active_folder)
+                if plan_text:
                     bullets = [line.strip() for line in plan_text.splitlines() if line.strip().startswith("- ")]
                     next_steps = bullets[:3] if bullets else ["Review plan milestones and pick the top-priority task."]
                     return make_response(

@@ -3,10 +3,15 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, Optional, Type
 from urllib.parse import parse_qs, urlsplit
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from braindrive_runtime.nodes import (
     ApprovalGateNode,
@@ -18,6 +23,7 @@ from braindrive_runtime.nodes import (
     OllamaModelNode,
     OpenRouterModelNode,
     RuntimeBootstrapNode,
+    SessionStateNode,
     ScraplingNode,
     SkillWorkflowNode,
     WebConsoleNode,
@@ -50,6 +56,7 @@ NODE_MAP: Dict[str, Type[ProtocolNode]] = {
     "memory_fs": MemoryFsNode,
     "folder": FolderWorkflowNode,
     "skill": SkillWorkflowNode,
+    "session_state": SessionStateNode,
     "approval_gate": ApprovalGateNode,
     "git_ops": GitOpsNode,
     "model_openrouter": OpenRouterModelNode,
@@ -499,6 +506,15 @@ class NodeHandler(BaseHTTPRequestHandler):
             return False
 
         path = self._path_only()
+        handled_paths = {
+            "/webterm/session/open",
+            "/webterm/session/close",
+            "/webterm/session/event",
+            "/webterm/message",
+        }
+        if path not in handled_paths:
+            return False
+
         body = self._read_json()
         if body is None:
             self._send_json(400, {"ok": False, "error": "Invalid JSON"})
@@ -560,7 +576,7 @@ class NodeHandler(BaseHTTPRequestHandler):
             self._send_json(200, response)
             return True
 
-        return False
+        return True
 
     def do_GET(self) -> None:
         if self._handle_webterm_get():
