@@ -295,7 +295,6 @@ class CliClient:
             default=False,
         )
         self.active_folder = ""
-        self.awaiting_interview_answer = False
         self.use_color = _should_use_color()
         self.prompts_page_size = max(1, DEFAULT_PROMPTS_PAGE_SIZE)
         self._prompt_lines: List[str] = []
@@ -342,18 +341,6 @@ class CliClient:
             active = payload.get("active_folder", "")
             if isinstance(active, str):
                 self.active_folder = active.strip()
-
-    def _track_interview_state(self, result: Dict[str, Any]) -> None:
-        response = self._extract_route_response(result)
-        if not response:
-            return
-        intent = str(response.get("intent", ""))
-        if intent == "workflow.interview.question":
-            self.awaiting_interview_answer = True
-            return
-        if intent in {"workflow.interview.ready", "workflow.interview.completed", "folder.switched"}:
-            self.awaiting_interview_answer = False
-            return
 
     def refresh_active_folder(self) -> None:
         try:
@@ -993,7 +980,6 @@ class CliClient:
 
     def print_route_result(self, result: Dict[str, Any]) -> None:
         self._track_active_folder(result)
-        self._track_interview_state(result)
         if self.raw_output:
             print(json.dumps(result, indent=2, ensure_ascii=True))
             return
@@ -1253,7 +1239,6 @@ class CliClient:
     def process_text(self, text: str, *, force_confirm: bool = False) -> None:
         context = {
             "active_folder": self.active_folder,
-            "interview": {"awaiting_answer": self.awaiting_interview_answer},
         }
         if not force_confirm and self._try_stream_model_chat(text, context):
             return

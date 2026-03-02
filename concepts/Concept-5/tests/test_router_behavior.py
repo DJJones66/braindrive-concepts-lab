@@ -233,6 +233,45 @@ def test_plain_text_routes_to_interview_continue_when_context_awaiting_answer(ru
     assert routed["route_response"]["intent"] in {"workflow.interview.question", "workflow.interview.ready"}
 
 
+def test_plain_text_routes_to_interview_continue_without_context_flag(runtime):
+    created = runtime.route_nl("create folder dimes", confirm=True)
+    assert created["status"] == "routed"
+    assert created["route_response"]["intent"] == "folder.created"
+
+    switched = runtime.route_nl("switch folder to dimes")
+    assert switched["status"] == "routed"
+    assert switched["route_response"]["intent"] == "folder.switched"
+
+    started = runtime.route_nl("start interview")
+    assert started["status"] == "routed"
+    assert started["route_response"]["intent"] == "workflow.interview.question"
+
+    analyzed = runtime.intent_router.analyze(
+        "I want to collect silver dimes from the 1960s",
+        context={"active_folder": "dimes"},
+    )
+    assert analyzed["canonical_intent"] == "workflow.interview.continue"
+    assert analyzed["payload"]["answer"] == "I want to collect silver dimes from the 1960s"
+
+
+def test_plain_text_routes_to_interview_continue_without_any_context(runtime):
+    created = runtime.route_nl("create folder dimes", confirm=True)
+    assert created["status"] == "routed"
+    assert created["route_response"]["intent"] == "folder.created"
+
+    switched = runtime.route_nl("switch folder to dimes")
+    assert switched["status"] == "routed"
+    assert switched["route_response"]["intent"] == "folder.switched"
+
+    started = runtime.route_nl("start interview")
+    assert started["status"] == "routed"
+    assert started["route_response"]["intent"] == "workflow.interview.question"
+
+    analyzed = runtime.intent_router.analyze("I want to collect silver dimes from the 1960s")
+    assert analyzed["canonical_intent"] == "workflow.interview.continue"
+    assert analyzed["payload"]["answer"] == "I want to collect silver dimes from the 1960s"
+
+
 def test_interview_context_overrides_work_on_phrase(runtime):
     analyzed = runtime.intent_router.analyze(
         "I own 2 of these and want to work on projects to learn them better",

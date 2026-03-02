@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 
 import pytest
 
+from braindrive_runtime.nodes import web_console as web_console_module
 from braindrive_runtime.protocol import new_uuid
 from braindrive_runtime.runtime import BrainDriveRuntime
 
@@ -142,6 +143,79 @@ def test_web_console_slash_commands_toggle_raw_mode(tmp_path: Path):
     session = node._get_session(session_id)  # noqa: SLF001
     assert session is not None
     assert session.get("raw_mode") is True
+
+
+def test_web_console_plain_interview_answer_routes_without_context_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    runtime = _runtime(tmp_path)
+    created = runtime.route_nl("create folder dimes", confirm=True)
+    assert created["status"] == "routed"
+    assert created["route_response"]["intent"] == "folder.created"
+
+    def _fake_http_post_json(url: str, payload: Dict[str, Any], timeout_sec: float) -> Dict[str, Any]:
+        assert url.endswith("/intent/route")
+        message = str(payload.get("message", ""))
+        context = payload.get("context", {})
+        extensions = payload.get("extensions", {})
+        return runtime.intent_router.route(
+            message,
+            context=context if isinstance(context, dict) else None,
+            confirm=bool(payload.get("confirm", False)),
+            request_extensions=extensions if isinstance(extensions, dict) else None,
+        )
+
+    monkeypatch.setattr(web_console_module, "http_post_json", _fake_http_post_json)
+
+    session_id = _open(runtime)
+
+    switched = runtime.route(
+        _msg(
+            "web.console.session.event",
+            {
+                "session_id": session_id,
+                "event": "terminal.input",
+                "payload": {"data": "switch folder to dimes"},
+            },
+            _identity(),
+        )
+    )
+    assert switched["intent"] == "web.console.session.events"
+
+    started = runtime.route(
+        _msg(
+            "web.console.session.event",
+            {
+                "session_id": session_id,
+                "event": "terminal.input",
+                "payload": {"data": "start interview"},
+            },
+            _identity(),
+        )
+    )
+    assert started["intent"] == "web.console.session.events"
+
+    answer_text = "I need OCR-assisted invoice reconciliation."
+    continued = runtime.route(
+        _msg(
+            "web.console.session.event",
+            {
+                "session_id": session_id,
+                "event": "terminal.input",
+                "payload": {"data": answer_text},
+            },
+            _identity(),
+        )
+    )
+    assert continued["intent"] == "web.console.session.events"
+
+    interview = runtime.route(_msg("session.interview.get", {"folder": "dimes"}))
+    assert interview["intent"] == "session.interview"
+    interview_payload = interview["payload"]["interview"]
+    answers = interview_payload.get("answers", [])
+    assert isinstance(answers, list)
+    assert answers
+    assert answers[-1]["answer"] == answer_text
 
 
 def test_web_console_mutation_requires_and_accepts_confirmation(tmp_path: Path):

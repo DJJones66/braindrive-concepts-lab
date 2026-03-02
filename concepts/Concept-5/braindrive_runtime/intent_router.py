@@ -108,6 +108,44 @@ class IntentRouterNL:
             return True
         return bool(context.get("awaiting_interview_answer", False))
 
+    def _interview_awaiting_answer_for_folder(self, folder: str) -> bool:
+        folder = folder.strip()
+        if not folder:
+            return False
+        if not self._has_capability("session.interview.get"):
+            return False
+
+        probe_message = {
+            "protocol_version": "0.1",
+            "message_id": new_uuid(),
+            "intent": "session.interview.get",
+            "payload": {"folder": folder},
+        }
+        try:
+            probe = self.router.route_for_test(probe_message)
+        except Exception:
+            return False
+        if not isinstance(probe, dict):
+            return False
+        if probe.get("intent") != "session.interview":
+            return False
+        payload = probe.get("payload", {})
+        if not isinstance(payload, dict):
+            return False
+        interview = payload.get("interview", {})
+        if not isinstance(interview, dict):
+            return False
+        status = str(interview.get("status", "")).strip().lower()
+        return status == "in_progress"
+
+    def _resolve_awaiting_interview_answer(self, context: Optional[Dict[str, Any]]) -> bool:
+        if self._context_awaiting_interview_answer(context):
+            return True
+        folder = self._resolve_active_folder(context)
+        if not folder:
+            return False
+        return self._interview_awaiting_answer_for_folder(folder)
+
     @staticmethod
     def _extract_urls(text: str) -> list[str]:
         raw = re.findall(r"https?://[^\s,]+", text, flags=re.IGNORECASE)
@@ -219,7 +257,7 @@ class IntentRouterNL:
         if scrape_plan is not None:
             plan.update(scrape_plan)
 
-        elif self._context_awaiting_interview_answer(context) and not any(
+        elif self._resolve_awaiting_interview_answer(context) and not any(
             token in lower for token in ["complete interview", "finish interview"]
         ):
             answer = cleaned.split(":", 1)[1].strip() if ":" in cleaned else cleaned
