@@ -1,0 +1,12 @@
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+
+# Local env
+**/.env
+**/.env.*
+!**/.env.example
+
+# Runtime/generated data
+**/data/

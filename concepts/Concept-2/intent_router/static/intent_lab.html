@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Concept-2 Intent Lab</title>
+    <style>
+      :root {
+        --bg-0: #f3f5f2;
+        --bg-1: #ffffff;
+        --bg-2: #e8ece6;
+        --ink-0: #1d2721;
+        --ink-1: #37463c;
+        --ink-2: #596a5f;
+        --accent: #0f766e;
+        --accent-2: #b45309;
+        --border: #c8d3ca;
+        --danger: #9f1239;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "IBM Plex Sans", "Source Sans Pro", sans-serif;
+        color: var(--ink-0);
+        background:
+          radial-gradient(circle at 20% 0%, #dce8df 0%, transparent 45%),
+          radial-gradient(circle at 80% 100%, #e8e1d8 0%, transparent 38%),
+          var(--bg-0);
+      }
+
+      .wrap {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 24px 18px 40px;
+      }
+
+      .hero {
+        display: grid;
+        gap: 12px;
+        margin-bottom: 18px;
+        padding: 18px;
+        border-radius: 16px;
+        border: 1px solid var(--border);
+        background: linear-gradient(135deg, #fcfffd 0%, #f1f6f2 100%);
+      }
+
+      .hero h1 {
+        margin: 0;
+        font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
+        font-size: 1.8rem;
+        letter-spacing: 0.02em;
+      }
+
+      .hero p {
+        margin: 0;
+        color: var(--ink-1);
+      }
+
+      .grid {
+        display: grid;
+        gap: 14px;
+      }
+
+      @media (min-width: 980px) {
+        .grid {
+          grid-template-columns: 1.1fr 0.9fr;
+          align-items: start;
+        }
+      }
+
+      .panel {
+        background: var(--bg-1);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 14px;
+      }
+
+      .panel h2 {
+        margin: 0 0 10px;
+        font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
+        font-size: 1.05rem;
+      }
+
+      label {
+        display: block;
+        margin: 8px 0 6px;
+        font-size: 0.9rem;
+        color: var(--ink-1);
+      }
+
+      textarea,
+      input,
+      select {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px;
+        font-family: inherit;
+        color: var(--ink-0);
+        background: #fcfdfb;
+      }
+
+      textarea {
+        min-height: 120px;
+        resize: vertical;
+      }
+
+      .inline {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: 1fr;
+      }
+
+      @media (min-width: 700px) {
+        .inline {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+
+      .buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      button {
+        appearance: none;
+        border: 0;
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      button.primary {
+        background: var(--accent);
+        color: #effffb;
+      }
+
+      button.secondary {
+        background: #e8f2ef;
+        color: var(--ink-0);
+      }
+
+      .chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 10px;
+      }
+
+      .chip {
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 0.79rem;
+        background: #f7faf7;
+        color: var(--ink-1);
+        cursor: pointer;
+      }
+
+      .chip:hover {
+        border-color: #98b2a1;
+      }
+
+      .cap-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 8px;
+      }
+
+      .cap-item {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 9px;
+        background: #fbfdfb;
+      }
+
+      .cap-title {
+        font-size: 0.9rem;
+        font-weight: 650;
+        margin-bottom: 4px;
+      }
+
+      .meta {
+        font-size: 0.78rem;
+        color: var(--ink-2);
+      }
+
+      .output {
+        margin-top: 8px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #f8fbf9;
+        padding: 10px;
+      }
+
+      .output .line {
+        font-size: 0.88rem;
+        margin: 4px 0;
+      }
+
+      .output pre {
+        margin: 10px 0 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 0.78rem;
+        color: var(--ink-1);
+      }
+
+      .status {
+        margin-top: 8px;
+        font-size: 0.84rem;
+      }
+
+      .status.ok {
+        color: var(--accent);
+      }
+
+      .status.error {
+        color: var(--danger);
+      }
+
+      .footer {
+        margin-top: 12px;
+        font-size: 0.76rem;
+        color: var(--ink-2);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <section class="hero">
+        <h1>Concept-2 Intent Lab</h1>
+        <p>
+          Human-in-the-loop testing for natural-language intent mapping. Analyze text, inspect canonical intent,
+          confidence, risk class, and optionally execute the route.
+        </p>
+      </section>
+
+      <section class="grid">
+        <article class="panel">
+          <h2>Intent Input</h2>
+          <label for="message">Prompt</label>
+          <textarea id="message" placeholder="e.g. Create note called release-plan and add kickoff checklist."></textarea>
+
+          <div class="inline">
+            <div>
+              <label for="conversation">Conversation ID</label>
+              <input id="conversation" value="demo-conv-1" />
+            </div>
+            <div>
+              <label for="mode">Action Mode</label>
+              <select id="mode">
+                <option value="analyze">Analyze only</option>
+                <option value="route">Analyze and route</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="inline">
+            <div>
+              <label for="actor">Actor ID</label>
+              <input id="actor" value="user.intent-lab" />
+            </div>
+            <div>
+              <label for="roles">Roles (comma-separated)</label>
+              <input id="roles" value="admin,user" />
+            </div>
+          </div>
+
+          <div class="inline">
+            <div>
+              <label for="authz">AuthZ decision</label>
+              <select id="authz">
+                <option value="allow">allow</option>
+                <option value="deny">deny</option>
+              </select>
+            </div>
+            <div>
+              <label for="confirm">Confirmation</label>
+              <select id="confirm">
+                <option value="false">false</option>
+                <option value="true">true</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="buttons">
+            <button class="primary" id="runBtn">Run Test</button>
+            <button class="secondary" id="clearBtn">Clear Output</button>
+          </div>
+
+          <div class="chip-row" id="examples"></div>
+
+          <div class="status" id="status"></div>
+
+          <div class="output" id="summary" hidden>
+            <div class="line" id="lineIntent"></div>
+            <div class="line" id="lineConfidence"></div>
+            <div class="line" id="lineRisk"></div>
+            <div class="line" id="lineReason"></div>
+            <div class="line" id="lineRequired"></div>
+            <pre id="raw"></pre>
+          </div>
+
+          <div class="footer">Endpoint: <code>/intent/analyze</code> and <code>/intent/route</code></div>
+        </article>
+
+        <article class="panel">
+          <h2>Fake Capability Catalog</h2>
+          <ul id="capabilities" class="cap-list"></ul>
+          <div class="footer">Capabilities are read live from <code>node.router</code> catalog.</div>
+        </article>
+      </section>
+    </div>
+
+    <script>
+      const qs = (id) => document.getElementById(id);
+
+      function showStatus(msg, ok = true) {
+        const el = qs("status");
+        el.textContent = msg;
+        el.className = `status ${ok ? "ok" : "error"}`;
+      }
+
+      function readForm() {
+        return {
+          message: qs("message").value,
+          conversation_id: qs("conversation").value,
+          identity: {
+            actor_id: qs("actor").value || "user.intent-lab",
+            actor_type: "human",
+            roles: qs("roles").value
+              .split(",")
+              .map((v) => v.trim())
+              .filter(Boolean),
+          },
+          authz: {
+            decision: qs("authz").value,
+            decision_id: `ui-${Date.now()}`,
+          },
+          confirm: qs("confirm").value === "true",
+        };
+      }
+
+      function renderSummary(body) {
+        const analysis = body.analysis || {};
+        const plan = body.plan || analysis.plan || {};
+
+        qs("summary").hidden = false;
+        qs("lineIntent").textContent = `Intent: ${plan.canonical_intent || "n/a"}`;
+        qs("lineConfidence").textContent = `Confidence: ${Number(plan.confidence || 0).toFixed(2)}`;
+        qs("lineRisk").textContent = `Risk: ${plan.risk_class || "n/a"} | Status: ${body.status || analysis.status || "n/a"}`;
+        qs("lineReason").textContent = `Reason Codes: ${(plan.reason_codes || []).join(", ") || "none"}`;
+        qs("lineRequired").textContent = `Required Extensions: ${(plan.required_extensions || []).join(", ") || "none"}`;
+        qs("raw").textContent = JSON.stringify(body, null, 2);
+      }
+
+      async function runIntentTest() {
+        const mode = qs("mode").value;
+        const payload = readForm();
+        if (!payload.message.trim()) {
+          showStatus("Prompt is required.", false);
+          return;
+        }
+
+        showStatus("Running intent test...");
+        const endpoint = mode === "route" ? "/intent/route" : "/intent/analyze";
+
+        try {
+          const resp = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const body = await resp.json();
+          renderSummary(body);
+          const ok = Boolean(body.ok ?? true);
+          showStatus(ok ? "Intent analysis complete." : "Intent analysis failed.", ok);
+        } catch (err) {
+          showStatus(`Request failed: ${err}`, false);
+        }
+      }
+
+      async function loadCapabilities() {
+        const holder = qs("capabilities");
+        holder.innerHTML = "";
+        try {
+          const resp = await fetch("/intent/capabilities");
+          const body = await resp.json();
+          const items = body.fake_capabilities || [];
+          if (!items.length) {
+            holder.innerHTML = "<li class='cap-item'>No fake capabilities found.</li>";
+            return;
+          }
+          for (const item of items) {
+            const li = document.createElement("li");
+            li.className = "cap-item";
+            li.innerHTML = `
+              <div class="cap-title">${item.capability}</div>
+              <div class="meta">Nodes: ${item.nodes.join(", ") || "n/a"}</div>
+              <div class="meta">Required extensions: ${(item.required_extensions || []).join(", ") || "none"}</div>
+            `;
+            holder.appendChild(li);
+          }
+        } catch {
+          holder.innerHTML = "<li class='cap-item'>Failed to load capability catalog.</li>";
+        }
+      }
+
+      function loadExamples() {
+        const samples = [
+          "List markdown notes",
+          "Read note q2-roadmap",
+          "Create note called release-checklist",
+          "Append to note release-checklist add smoke test items",
+          "Search notes for roadmap",
+          "Delete markdown note release-checklist",
+        ];
+        const row = qs("examples");
+        row.innerHTML = "";
+        for (const sample of samples) {
+          const el = document.createElement("button");
+          el.type = "button";
+          el.className = "chip";
+          el.textContent = sample;
+          el.addEventListener("click", () => {
+            qs("message").value = sample;
+          });
+          row.appendChild(el);
+        }
+      }
+
+      qs("runBtn").addEventListener("click", runIntentTest);
+      qs("clearBtn").addEventListener("click", () => {
+        qs("summary").hidden = true;
+        qs("raw").textContent = "";
+        showStatus("Output cleared.");
+      });
+
+      loadExamples();
+      loadCapabilities();
+    </script>
+  </body>
+</html>

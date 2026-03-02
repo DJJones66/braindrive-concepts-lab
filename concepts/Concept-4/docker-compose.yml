@@ -1,0 +1,287 @@
+name: braindrive-mvp
+
+services:
+  node-router:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
+    command: ["python", "-u", "services/router_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      ROUTER_PORT: "8080"
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept4-dev-token}"
+      ROUTER_NODE_TIMEOUT_SEC: "${ROUTER_NODE_TIMEOUT_SEC:-45}"
+      BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+      BRAINDRIVE_USER_CONFIG_PATH: /workspace/data/runtime/user-config.yaml
+      BRAINDRIVE_DEFAULT_PROVIDER: "${BRAINDRIVE_DEFAULT_PROVIDER:-openrouter}"
+      BRAINDRIVE_OPENROUTER_API_KEY: "${BRAINDRIVE_OPENROUTER_API_KEY:-}"
+      BRAINDRIVE_OPENROUTER_BASE_URL: "${BRAINDRIVE_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
+      BRAINDRIVE_OPENROUTER_DEFAULT_MODEL: "${BRAINDRIVE_OPENROUTER_DEFAULT_MODEL:-}"
+      BRAINDRIVE_OLLAMA_BASE_URL: "${BRAINDRIVE_OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}"
+      BRAINDRIVE_OLLAMA_API_KEY: "${BRAINDRIVE_OLLAMA_API_KEY:-}"
+      BRAINDRIVE_OLLAMA_DEFAULT_MODEL: "${BRAINDRIVE_OLLAMA_DEFAULT_MODEL:-llama3:8b}"
+      BRAINDRIVE_MODEL_TIMEOUT_SEC: "${BRAINDRIVE_MODEL_TIMEOUT_SEC:-30}"
+    volumes:
+      - ./:/workspace
+    ports:
+      - "${BRAINDRIVE_ROUTER_PORT:-9480}:8080"
+
+  intent-router-natural-language:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
+    command: ["python", "-u", "services/intent_router_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      INTENT_ROUTER_PORT: "8081"
+      INTENT_ROUTER_ROUTER_BASE_URL: http://node-router:8080
+      INTENT_ROUTER_CATALOG_TIMEOUT_SEC: "${INTENT_ROUTER_CATALOG_TIMEOUT_SEC:-2}"
+      INTENT_ROUTER_ROUTE_TIMEOUT_SEC: "${INTENT_ROUTER_ROUTE_TIMEOUT_SEC:-60}"
+      BRAINDRIVE_ENABLE_TEST_ENDPOINTS: "${BRAINDRIVE_ENABLE_TEST_ENDPOINTS:-false}"
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+      BRAINDRIVE_WORKFLOW_FULL_TRACE: "${BRAINDRIVE_WORKFLOW_FULL_TRACE:-true}"
+    volumes:
+      - ./:/workspace
+    ports:
+      - "${BRAINDRIVE_INTENT_PORT:-9481}:8081"
+    depends_on:
+      - node-router
+
+  node-runtime-bootstrap:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
+    command: ["python", "-u", "services/node_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      NODE_KIND: runtime_bootstrap
+      NODE_PORT: "8120"
+      NODE_ENDPOINT_URL: http://node-runtime-bootstrap:8120/bdp
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept4-dev-token}"
+      ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
+      ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
+      BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+    volumes:
+      - ./:/workspace
+    depends_on:
+      - node-router
+
+  node-memory-fs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
+    command: ["python", "-u", "services/node_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      NODE_KIND: memory_fs
+      NODE_PORT: "8121"
+      NODE_ENDPOINT_URL: http://node-memory-fs:8121/bdp
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept4-dev-token}"
+      ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
+      ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
+      BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+    volumes:
+      - ./:/workspace
+    depends_on:
+      - node-router
+
+  node-workflow-folder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
+    command: ["python", "-u", "services/node_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      NODE_KIND: folder
+      NODE_PORT: "8122"
+      NODE_ENDPOINT_URL: http://node-workflow-folder:8122/bdp
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept4-dev-token}"
+      ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
+      ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
+      BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+    volumes:
+      - ./:/workspace
+    depends_on:
+      - node-router
+
+  node-workflow-skill:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
+    command: ["python", "-u", "services/node_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      NODE_KIND: skill
+      NODE_PORT: "8123"
+      NODE_ENDPOINT_URL: http://node-workflow-skill:8123/bdp
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept4-dev-token}"
+      ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
+      ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
+      BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+      BRAINDRIVE_USER_CONFIG_PATH: /workspace/data/runtime/user-config.yaml
+      BRAINDRIVE_DEFAULT_PROVIDER: "${BRAINDRIVE_DEFAULT_PROVIDER:-openrouter}"
+      BRAINDRIVE_OPENROUTER_DEFAULT_MODEL: "${BRAINDRIVE_OPENROUTER_DEFAULT_MODEL:-}"
+      BRAINDRIVE_OLLAMA_DEFAULT_MODEL: "${BRAINDRIVE_OLLAMA_DEFAULT_MODEL:-}"
+    volumes:
+      - ./:/workspace
+    depends_on:
+      - node-router
+
+  node-approval-gate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
+    command: ["python", "-u", "services/node_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      NODE_KIND: approval_gate
+      NODE_PORT: "8126"
+      NODE_ENDPOINT_URL: http://node-approval-gate:8126/bdp
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept4-dev-token}"
+      ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
+      ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
+      BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+    volumes:
+      - ./:/workspace
+    depends_on:
+      - node-router
+
+  node-git-ops:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
+    command: ["python", "-u", "services/node_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      NODE_KIND: git_ops
+      NODE_PORT: "8127"
+      NODE_ENDPOINT_URL: http://node-git-ops:8127/bdp
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept4-dev-token}"
+      ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
+      ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
+      BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+    volumes:
+      - ./:/workspace
+    depends_on:
+      - node-router
+
+  node-model-openrouter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
+    command: ["python", "-u", "services/node_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      NODE_KIND: model_openrouter
+      NODE_PORT: "8128"
+      NODE_ENDPOINT_URL: http://node-model-openrouter:8128/bdp
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept4-dev-token}"
+      ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
+      ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
+      BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+      BRAINDRIVE_OPENROUTER_API_KEY: "${BRAINDRIVE_OPENROUTER_API_KEY:-}"
+      BRAINDRIVE_OPENROUTER_BASE_URL: "${BRAINDRIVE_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
+      BRAINDRIVE_OPENROUTER_DEFAULT_MODEL: "${BRAINDRIVE_OPENROUTER_DEFAULT_MODEL:-}"
+      BRAINDRIVE_OPENROUTER_SITE_URL: "${BRAINDRIVE_OPENROUTER_SITE_URL:-}"
+      BRAINDRIVE_OPENROUTER_APP_NAME: "${BRAINDRIVE_OPENROUTER_APP_NAME:-BrainDrive Concept-4}"
+      BRAINDRIVE_MODEL_TIMEOUT_SEC: "${BRAINDRIVE_MODEL_TIMEOUT_SEC:-30}"
+    volumes:
+      - ./:/workspace
+    depends_on:
+      - node-router
+
+  node-model-ollama:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
+    command: ["python", "-u", "services/node_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      NODE_KIND: model_ollama
+      NODE_PORT: "8129"
+      NODE_ENDPOINT_URL: http://node-model-ollama:8129/bdp
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept4-dev-token}"
+      ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
+      ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
+      BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+      BRAINDRIVE_OLLAMA_BASE_URL: "${BRAINDRIVE_OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}"
+      BRAINDRIVE_OLLAMA_API_KEY: "${BRAINDRIVE_OLLAMA_API_KEY:-}"
+      BRAINDRIVE_OLLAMA_DEFAULT_MODEL: "${BRAINDRIVE_OLLAMA_DEFAULT_MODEL:-llama3:8b}"
+      BRAINDRIVE_MODEL_TIMEOUT_SEC: "${BRAINDRIVE_MODEL_TIMEOUT_SEC:-30}"
+    volumes:
+      - ./:/workspace
+    depends_on:
+      - node-router
+
+  node-chat-general:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
+    command: ["python", "-u", "services/node_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      NODE_KIND: chat_general
+      NODE_PORT: "8130"
+      NODE_ENDPOINT_URL: http://node-chat-general:8130/bdp
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept4-dev-token}"
+      ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
+      ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
+      BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+    volumes:
+      - ./:/workspace
+    depends_on:
+      - node-router
+
+  node-audit-log:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    user: "${HOST_UID:-1001}:${HOST_GID:-1001}"
+    command: ["python", "-u", "services/node_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      NODE_KIND: audit_log
+      NODE_PORT: "8131"
+      NODE_ENDPOINT_URL: http://node-audit-log:8131/bdp
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept4-dev-token}"
+      ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
+      ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
+      BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
+      BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime
+    volumes:
+      - ./:/workspace
+    depends_on:
+      - node-router

@@ -1,0 +1,208 @@
+services:
+  node-router:
+    image: python:3.12-slim
+    working_dir: /workspace
+    command: ["python", "-u", "router/router_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      ROUTER_PORT: "8080"
+      ROUTER_DATA_DIR: /workspace/data/router
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept1-dev-token}"
+      ROUTER_NODE_TIMEOUT_SEC: "2.5"
+      ROUTER_HEARTBEAT_TTL_SEC: "15"
+      ROUTER_CIRCUIT_FAIL_THRESHOLD: "2"
+      ROUTER_CIRCUIT_OPEN_SEC: "10"
+      ROUTER_AUTH_URL: http://node-auth-policy:8101/bdp
+      ROUTER_AUDIT_URL: http://node-audit-log:8103/bdp
+      ROUTER_ACTIVITY_URL: http://node-activity-feedback:8104/bdp
+      ROUTER_MUTATING_INTENTS: workflow.page.create,workflow.interview.start
+      ROUTER_DESTRUCTIVE_INTENTS: memory.delete
+    volumes:
+      - ./:/workspace
+    ports:
+      - "${CONCEPT1_ROUTER_PORT:-9180}:8080"
+
+  intent-router-natural-language:
+    image: python:3.12-slim
+    working_dir: /workspace
+    command: ["python", "-u", "intent_router/intent_router_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      INTENT_ROUTER_PORT: "8081"
+      INTENT_ROUTER_ROUTER_BASE_URL: http://node-router:8080
+      INTENT_ROUTER_SESSION_URL: http://node-session-state:8102/bdp
+      INTENT_ROUTER_AUDIT_URL: http://node-audit-log:8103/bdp
+      INTENT_ROUTER_DATA_DIR: /workspace/data/intent
+    volumes:
+      - ./:/workspace
+    ports:
+      - "${CONCEPT1_INTENT_PORT:-9181}:8081"
+    depends_on:
+      - node-router
+      - node-session-state
+      - node-audit-log
+
+  node-auth-policy:
+    image: python:3.12-slim
+    working_dir: /workspace
+    command: ["python", "-u", "nodes/auth_policy/auth_policy_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      AUTH_PORT: "8101"
+      AUTH_MODE: "${AUTH_MODE:-allow}"
+      NODE_ID: node.auth.policy
+      NODE_VERSION: "0.1.0"
+      NODE_ENDPOINT_URL: http://node-auth-policy:8101/bdp
+      NODE_SUPPORTED_PROTOCOLS: "0.1"
+      NODE_PRIORITY: "180"
+      NODE_CAPABILITIES_JSON: '[{"name":"auth.authorize","required_extensions":["identity"]}]'
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept1-dev-token}"
+      ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
+      ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
+      ROUTER_HEARTBEAT_SEC: "5"
+    volumes:
+      - ./:/workspace
+    ports:
+      - "${CONCEPT1_AUTH_PORT:-9182}:8101"
+    depends_on:
+      - node-router
+
+  node-session-state:
+    image: python:3.12-slim
+    working_dir: /workspace
+    command: ["python", "-u", "nodes/session_state/session_state_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      SESSION_PORT: "8102"
+      NODE_ID: node.session.state
+      NODE_VERSION: "0.1.0"
+      NODE_ENDPOINT_URL: http://node-session-state:8102/bdp
+      NODE_SUPPORTED_PROTOCOLS: "0.1"
+      NODE_PRIORITY: "160"
+      NODE_CAPABILITIES_JSON: '[{"name":"session.context.get","required_extensions":["session"]},{"name":"session.context.set","required_extensions":["session"]}]'
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept1-dev-token}"
+      ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
+      ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
+      ROUTER_HEARTBEAT_SEC: "5"
+    volumes:
+      - ./:/workspace
+    depends_on:
+      - node-router
+
+  node-audit-log:
+    image: python:3.12-slim
+    working_dir: /workspace
+    command: ["python", "-u", "nodes/audit_log/audit_log_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      AUDIT_PORT: "8103"
+      AUDIT_DATA_DIR: /workspace/data/audit
+      NODE_ID: node.audit.log
+      NODE_VERSION: "0.1.0"
+      NODE_ENDPOINT_URL: http://node-audit-log:8103/bdp
+      NODE_SUPPORTED_PROTOCOLS: "0.1"
+      NODE_PRIORITY: "140"
+      NODE_CAPABILITIES_JSON: '[{"name":"audit.record","required_extensions":[]},{"name":"auth.audit.query","required_extensions":["identity","authz"]}]'
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept1-dev-token}"
+      ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
+      ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
+      ROUTER_HEARTBEAT_SEC: "5"
+    volumes:
+      - ./:/workspace
+    depends_on:
+      - node-router
+
+  node-activity-feedback:
+    image: python:3.12-slim
+    working_dir: /workspace
+    command: ["python", "-u", "nodes/activity_feedback/activity_feedback_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      ACTIVITY_PORT: "8104"
+      ACTIVITY_DATA_DIR: /workspace/data/activity
+      NODE_ID: node.activity.feedback
+      NODE_VERSION: "0.1.0"
+      NODE_ENDPOINT_URL: http://node-activity-feedback:8104/bdp
+      NODE_SUPPORTED_PROTOCOLS: "0.1"
+      NODE_PRIORITY: "130"
+      NODE_CAPABILITIES_JSON: '[{"name":"activity.record","required_extensions":[]},{"name":"system.status.typing","required_extensions":["session"]},{"name":"system.status.working","required_extensions":["session"]},{"name":"system.error.report","required_extensions":[]}]'
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept1-dev-token}"
+      ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
+      ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
+      ROUTER_HEARTBEAT_SEC: "5"
+    volumes:
+      - ./:/workspace
+    depends_on:
+      - node-router
+
+  node-chat-general-primary:
+    image: python:3.12-slim
+    working_dir: /workspace
+    command: ["python", "-u", "nodes/chat_general/chat_general_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      CHAT_PORT: "8111"
+      CHAT_SERVICE_NAME: node.chat.general.primary
+      CHAT_FAIL_PATTERN: "[fail-primary]"
+      NODE_ID: node.chat.general.primary
+      NODE_VERSION: "0.1.0"
+      NODE_ENDPOINT_URL: http://node-chat-general-primary:8111/bdp
+      NODE_SUPPORTED_PROTOCOLS: "0.1"
+      NODE_PRIORITY: "220"
+      NODE_CAPABILITIES_JSON: '[{"name":"chat.general","required_extensions":["identity"]}]'
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept1-dev-token}"
+      ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
+      ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
+      ROUTER_HEARTBEAT_SEC: "5"
+    volumes:
+      - ./:/workspace
+    depends_on:
+      - node-router
+
+  node-chat-general-backup:
+    image: python:3.12-slim
+    working_dir: /workspace
+    command: ["python", "-u", "nodes/chat_general/chat_general_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      CHAT_PORT: "8112"
+      CHAT_SERVICE_NAME: node.chat.general.backup
+      CHAT_FAIL_PATTERN: ""
+      NODE_ID: node.chat.general.backup
+      NODE_VERSION: "0.1.0"
+      NODE_ENDPOINT_URL: http://node-chat-general-backup:8112/bdp
+      NODE_SUPPORTED_PROTOCOLS: "0.1"
+      NODE_PRIORITY: "120"
+      NODE_CAPABILITIES_JSON: '[{"name":"chat.general","required_extensions":["identity"]}]'
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept1-dev-token}"
+      ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
+      ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
+      ROUTER_HEARTBEAT_SEC: "5"
+    volumes:
+      - ./:/workspace
+    depends_on:
+      - node-router
+
+  node-workflow:
+    image: python:3.12-slim
+    working_dir: /workspace
+    command: ["python", "-u", "nodes/workflow/workflow_service.py"]
+    environment:
+      PYTHONPATH: /workspace
+      WORKFLOW_PORT: "8113"
+      WORKFLOW_SERVICE_NAME: node.workflow
+      WORKFLOW_DATA_DIR: /workspace/data/workflow
+      NODE_ID: node.workflow
+      NODE_VERSION: "0.1.0"
+      NODE_ENDPOINT_URL: http://node-workflow:8113/bdp
+      NODE_SUPPORTED_PROTOCOLS: "0.1"
+      NODE_PRIORITY: "210"
+      NODE_CAPABILITIES_JSON: '[{"name":"workflow.page.create","required_extensions":["identity","authz"]},{"name":"workflow.interview.start","required_extensions":["identity","authz"]},{"name":"workflow.plan.generate","required_extensions":["identity"]},{"name":"memory.delete","required_extensions":["identity","authz","confirmation"]}]'
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-concept1-dev-token}"
+      ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
+      ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
+      ROUTER_HEARTBEAT_SEC: "5"
+    volumes:
+      - ./:/workspace
+    depends_on:
+      - node-router
