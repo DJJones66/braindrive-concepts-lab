@@ -146,11 +146,13 @@ def test_node_service_does_not_own_webterm_http_ingress():
 
 def test_gateway_terminal_route_is_canonical_and_not_tty_gated():
     repo_root = Path(__file__).resolve().parents[1]
-    gateway_source = (repo_root / "services" / "gateway_service.py").read_text(encoding="utf-8")
+    gateway_source = (repo_root / "services" / "gateway_adapter_service.py").read_text(encoding="utf-8")
+    wrapper_source = (repo_root / "services" / "gateway_service.py").read_text(encoding="utf-8")
     compose_source = (repo_root / "docker-compose.yml").read_text(encoding="utf-8")
 
     assert 'if path == "/ui/terminal":' in gateway_source
     assert "/webterm/health" in gateway_source
+    assert "gateway_adapter_service" in wrapper_source
     assert "node-web-console-tty" in compose_source
     # Canonical gateway route must not depend on dedicated tty compare-mode flags.
     assert "TTY_WEBTERM" not in gateway_source

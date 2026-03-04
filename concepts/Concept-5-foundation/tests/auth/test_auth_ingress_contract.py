@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from services import gateway_service as gateway
+from services import gateway_adapter_service as gateway
 
 
 class _FakeHandler:
