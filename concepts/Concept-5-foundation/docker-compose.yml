@@ -48,7 +48,7 @@ services:
       BRAINDRIVE_WORKFLOW_FULL_TRACE: "${BRAINDRIVE_WORKFLOW_FULL_TRACE:-true}"
     volumes:
       - ./data/runtime:/workspace/data/runtime
-      - ./data/library:/workspace/data/library:ro
+      - ./data/library:/workspace/data/library
     ports:
       - "${BRAINDRIVE_INTENT_PORT:-9481}:8081"
     depends_on:
@@ -76,7 +76,7 @@ services:
       BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime/gateway
     volumes:
       - ./data/runtime:/workspace/data/runtime
-      - ./data/library:/workspace/data/library:ro
+      - ./data/library:/workspace/data/library
     ports:
       - "${BRAINDRIVE_GATEWAY_PORT:-9482}:8090"
     depends_on:

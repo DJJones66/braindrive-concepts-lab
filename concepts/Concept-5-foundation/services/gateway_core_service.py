@@ -539,9 +539,22 @@ def route_nl_message(
             record=chat_record,
             write_sidecar=chat_sidecar_enabled,
         )
-    except Exception:
-        # Keep routing non-fatal even when durable chat persistence cannot be written.
-        pass
+    except Exception as exc:
+        # Keep routing non-fatal even when durable chat persistence cannot be written,
+        # but emit an operational breadcrumb for debugging deployment issues.
+        try:
+            append_log(
+                "gateway_chat_persistence",
+                {
+                    "timestamp": now_iso(),
+                    "conversation_id": conversation_id,
+                    "record_id": str(record.get("record_id", "")),
+                    "library_root": str(library_root),
+                    "error": str(exc),
+                },
+            )
+        except Exception:
+            pass
 
     return result
 

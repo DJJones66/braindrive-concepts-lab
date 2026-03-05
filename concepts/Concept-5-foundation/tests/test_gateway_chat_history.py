@@ -126,3 +126,44 @@ def test_route_nl_message_reuses_bounded_history_for_provider_context(tmp_path: 
         {"role": "assistant", "content": "first-reply"},
     ]
 
+
+def test_route_nl_message_logs_chat_persistence_failure(monkeypatch, tmp_path: Path):
+    state = gateway_core.default_core_state()
+    library_root = tmp_path / "library"
+    logs: List[Dict[str, Any]] = []
+
+    def _fake_post(_url: str, _payload: Dict[str, Any], timeout_sec: float) -> Dict[str, Any]:
+        _ = timeout_sec
+        return _fake_router_response("hello back")
+
+    def _append_log(name: str, payload: Dict[str, Any]) -> None:
+        logs.append({"name": name, "payload": payload})
+
+    def _raise_append(*, library_root: str, conversation_id: str, record: Dict[str, Any], write_sidecar: bool) -> None:
+        raise PermissionError("read-only file system")
+
+    monkeypatch.setattr(gateway_core, "_append_chat_record", _raise_append)
+
+    result = gateway_core.route_nl_message(
+        state=state,
+        persist_state=lambda: None,
+        append_log=_append_log,
+        intent_router_base_url="http://intent-router",
+        http_timeout_sec=5.0,
+        body={"message": "hello", "context": {}, "metadata": {"channel": "api"}},
+        auth_context=_auth_context(),
+        conversation_id="conv_fail",
+        library_root=str(library_root),
+        provider_context_enabled=True,
+        provider_context_max_turns=12,
+        provider_context_max_chars=12000,
+        chat_sidecar_enabled=True,
+        post_json=_fake_post,
+    )
+
+    assert result["ok"] is True
+    persist_logs = [item for item in logs if item.get("name") == "gateway_chat_persistence"]
+    assert persist_logs
+    payload = persist_logs[-1]["payload"]
+    assert payload["conversation_id"] == "conv_fail"
+    assert "read-only" in str(payload.get("error", "")).lower()

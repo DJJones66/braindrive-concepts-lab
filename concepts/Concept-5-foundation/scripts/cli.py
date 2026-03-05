@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+from datetime import datetime, timezone
 import json
 import os
 import re
@@ -62,6 +63,7 @@ DEFAULT_INTENT_BASE = _env("BRAINDRIVE_INTENT_BASE", default="http://localhost:9
 DEFAULT_GATEWAY_BASE = _env("BRAINDRIVE_GATEWAY_BASE", default="http://localhost:9482")
 DEFAULT_TIMEOUT_SEC = float(_env("BRAINDRIVE_CLI_TIMEOUT_SEC", default="8.0"))
 DEFAULT_HISTORY_FILE = (Path(__file__).resolve().parent.parent / "data" / "runtime" / "state" / ".cli_history").as_posix()
+DEFAULT_LIBRARY_ROOT = (Path(__file__).resolve().parent.parent / "data" / "library").as_posix()
 DEFAULT_HISTORY_MAX = int(_env("BRAINDRIVE_CLI_HISTORY_MAX", default="2000"))
 DEFAULT_PROMPTS_PAGE_SIZE = int(_env("BRAINDRIVE_PROMPTS_PAGE_SIZE", default="14"))
 ANSI_BLUE = "\033[34m"
@@ -311,12 +313,125 @@ class CliClient:
         self.actor_roles = [item.strip() for item in _env("BRAINDRIVE_CLI_ACTOR_ROLES", default="operator").split(",") if item.strip()]
         if not self.actor_roles:
             self.actor_roles = ["operator"]
+        self.library_root = Path(_env("BRAINDRIVE_LIBRARY_ROOT", default=DEFAULT_LIBRARY_ROOT)).expanduser()
+        self.conversation_id = ""
         self.active_folder = ""
         self.use_color = _should_use_color()
         self.prompts_page_size = max(1, DEFAULT_PROMPTS_PAGE_SIZE)
         self._prompt_lines: List[str] = []
         self._prompt_cursor = 0
         self._prompt_title = ""
+
+    @staticmethod
+    def _now_iso() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    def _ensure_conversation_id(self) -> str:
+        if not self.conversation_id:
+            self.conversation_id = f"conv_cli_{uuid.uuid4()}"
+        return self.conversation_id
+
+    @staticmethod
+    def _safe_conversation_filename(conversation_id: str) -> str:
+        raw = str(conversation_id).strip()
+        safe = "".join(ch for ch in raw if ch.isalnum() or ch in {"-", "_"})
+        return safe or f"conv_{uuid.uuid4()}"
+
+    def _chat_paths(self, conversation_id: str) -> tuple[Path, Path]:
+        chats_dir = self.library_root.resolve() / "chats"
+        chats_dir.mkdir(parents=True, exist_ok=True)
+        name = self._safe_conversation_filename(conversation_id)
+        return chats_dir / f"{name}.jsonl", chats_dir / f"{name}.meta.json"
+
+    def _load_provider_history_messages(self, conversation_id: str, max_turns: int, max_chars: int) -> List[Dict[str, str]]:
+        jsonl_path, _ = self._chat_paths(conversation_id)
+        if not jsonl_path.exists():
+            return []
+
+        messages: List[Dict[str, str]] = []
+        try:
+            for line in jsonl_path.read_text(encoding="utf-8").splitlines():
+                item = json.loads(line)
+                if not isinstance(item, dict):
+                    continue
+                input_obj = item.get("input", {})
+                output_obj = item.get("output", {})
+                user_text = str(input_obj.get("text", "")).strip() if isinstance(input_obj, dict) else ""
+                assistant_text = str(output_obj.get("text", "")).strip() if isinstance(output_obj, dict) else ""
+                if user_text:
+                    messages.append({"role": "user", "content": user_text})
+                if assistant_text:
+                    messages.append({"role": "assistant", "content": assistant_text})
+        except Exception:
+            return []
+
+        if max_turns > 0:
+            messages = messages[-(max_turns * 2) :]
+        if max_chars <= 0:
+            return messages
+
+        bounded: List[Dict[str, str]] = []
+        used = 0
+        for item in reversed(messages):
+            content = str(item.get("content", "")).strip()
+            if not content:
+                continue
+            if used + len(content) > max_chars:
+                break
+            bounded.append(item)
+            used += len(content)
+        bounded.reverse()
+        return bounded
+
+    def _append_stream_chat_record(self, *, input_text: str, output_text: str, complete: bool) -> None:
+        conversation_id = self._ensure_conversation_id()
+        jsonl_path, meta_path = self._chat_paths(conversation_id)
+        record_id = f"msg_{uuid.uuid4()}"
+        trace_id = str(uuid.uuid4())
+
+        chat_record = {
+            "ts": self._now_iso(),
+            "conversation_id": conversation_id,
+            "record_id": record_id,
+            "actor": {
+                "id": self.actor_id,
+                "type": "user",
+            },
+            "channel": "cli",
+            "route": {
+                "intent": "model.chat.completed",
+                "status": "streamed" if complete else "streamed_partial",
+            },
+            "input": {"text": input_text},
+            "output": {"intent": "model.chat.completed", "text": output_text},
+            "metadata": {
+                "channel": "cli",
+                "source": "cli_direct_stream",
+            },
+            "trace": {
+                "trace_id": trace_id,
+                "auth_session_id": "",
+                "console_session_id": "",
+            },
+        }
+
+        with jsonl_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(chat_record, ensure_ascii=True) + "\n")
+
+        sidecar: Dict[str, Any] = {}
+        if meta_path.exists():
+            try:
+                loaded = json.loads(meta_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    sidecar = loaded
+            except Exception:
+                sidecar = {}
+
+        sidecar["conversation_id"] = conversation_id
+        sidecar["record_count"] = int(sidecar.get("record_count", 0)) + 1
+        sidecar["updated_at"] = chat_record["ts"]
+        sidecar["last_record_id"] = record_id
+        meta_path.write_text(json.dumps(sidecar, ensure_ascii=True, indent=2), encoding="utf-8")
 
     def prompt(self) -> str:
         app_label = "braindrive"
@@ -426,6 +541,7 @@ class CliClient:
         extensions: Optional[Dict[str, Any]] = None,
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        self._ensure_conversation_id()
         payload: Dict[str, Any] = {
             "message": text,
             "confirm": bool(confirm),
@@ -442,6 +558,7 @@ class CliClient:
             "actor_type": "user",
         }
         gateway_payload: Dict[str, Any] = {
+            "conversation_id": self.conversation_id,
             "message": text,
             "confirm": bool(confirm),
             "context": payload.get("context", {}),
@@ -461,6 +578,9 @@ class CliClient:
                 err = gateway_result.get("error", {}) if isinstance(gateway_result.get("error"), dict) else {}
                 message = str(err.get("message", "gateway route failed")).strip() or "gateway route failed"
                 raise RuntimeError(message)
+            returned_conversation_id = str(gateway_result.get("conversation_id", "")).strip()
+            if returned_conversation_id:
+                self.conversation_id = returned_conversation_id
             return gateway_result
         except Exception:
             if not self.allow_intent_fallback:
@@ -938,12 +1058,26 @@ class CliClient:
         *,
         model: str,
         prompt: str,
+        messages: Optional[List[Dict[str, str]]] = None,
         llm_extension: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         llm = llm_extension if isinstance(llm_extension, dict) else {}
+        stream_messages: List[Dict[str, str]] = []
+        if isinstance(messages, list):
+            for item in messages:
+                if not isinstance(item, dict):
+                    continue
+                role = str(item.get("role", "")).strip().lower()
+                content = str(item.get("content", "")).strip()
+                if role not in {"system", "user", "assistant"} or not content:
+                    continue
+                stream_messages.append({"role": role, "content": content})
+        if not stream_messages:
+            stream_messages = [{"role": "user", "content": prompt}]
+
         body: Dict[str, Any] = {
             "model": model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": stream_messages,
             "stream": True,
         }
 
@@ -1032,20 +1166,27 @@ class CliClient:
         sys.stdout.write("\n")
         sys.stdout.flush()
 
-    def _stream_model_chat_response(self, *, prompt: str, llm_extension: Optional[Dict[str, Any]] = None) -> bool:
+    def _stream_model_chat_response(
+        self,
+        *,
+        prompt: str,
+        messages: Optional[List[Dict[str, str]]] = None,
+        llm_extension: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         target = self._resolve_stream_target(llm_extension=llm_extension)
         provider = target["provider"]
         model = target["model"]
         base_url = target["base_url"]
         url = f"{base_url}/chat/completions"
         headers = self._stream_headers_for_provider(provider)
-        body = self._build_stream_request_body(model=model, prompt=prompt, llm_extension=llm_extension)
+        body = self._build_stream_request_body(model=model, prompt=prompt, messages=messages, llm_extension=llm_extension)
 
         started_at = time.perf_counter()
         first_chunk_at: Optional[float] = None
         chunk_count = 0
         total_chars = 0
         started = False
+        chunks: List[str] = []
         try:
             for chunk in self._iter_model_stream_chunks(
                 url=url,
@@ -1058,6 +1199,7 @@ class CliClient:
                     first_chunk_at = time.perf_counter()
                     started = True
                 self._write_ai_stream_chunk(chunk)
+                chunks.append(chunk)
                 chunk_count += 1
                 total_chars += len(chunk)
         except Exception as exc:
@@ -1070,11 +1212,11 @@ class CliClient:
                     self._print_system(
                         f"[stream] provider={provider} model={model} ttft={ttft:.3f}s chunks={chunk_count} chars={total_chars} total={elapsed:.3f}s partial=true"
                     )
-                return True
-            return False
+                return {"handled": True, "text": "".join(chunks), "complete": False}
+            return {"handled": False, "text": "", "complete": False}
 
         if not started:
-            return False
+            return {"handled": False, "text": "", "complete": False}
         self._end_ai_stream_line()
         if self.stream_diagnostics and first_chunk_at is not None:
             elapsed = time.perf_counter() - started_at
@@ -1083,7 +1225,7 @@ class CliClient:
             self._print_system(
                 f"[stream] provider={provider} model={model} ttft={ttft:.3f}s chunks={chunk_count} avg_chunk_chars={avg_chunk:.2f} total={elapsed:.3f}s"
             )
-        return True
+        return {"handled": True, "text": "".join(chunks), "complete": True}
 
     def _analysis_is_streamable_model_chat(self, analysis: Dict[str, Any]) -> bool:
         if not isinstance(analysis, dict):
@@ -1111,8 +1253,22 @@ class CliClient:
         if self.raw_output:
             return False
 
+        self._ensure_conversation_id()
+        stream_context: Dict[str, Any] = dict(context)
         try:
-            analysis = self.analyze_text(text, context=context)
+            max_turns = max(1, int(_env("GATEWAY_PROVIDER_CONTEXT_MAX_TURNS", default="12")))
+        except (TypeError, ValueError):
+            max_turns = 12
+        try:
+            max_chars = max(1, int(_env("GATEWAY_PROVIDER_CONTEXT_MAX_CHARS", default="12000")))
+        except (TypeError, ValueError):
+            max_chars = 12000
+        history = self._load_provider_history_messages(self.conversation_id, max_turns=max_turns, max_chars=max_chars)
+        if history:
+            stream_context["provider_history_messages"] = history
+
+        try:
+            analysis = self.analyze_text(text, context=stream_context)
         except Exception:
             return False
 
@@ -1125,8 +1281,24 @@ class CliClient:
         prompt = str(payload.get("prompt", "")).strip()
         if not prompt:
             return False
+        raw_messages = payload.get("messages", [])
+        messages = raw_messages if isinstance(raw_messages, list) else None
 
-        return self._stream_model_chat_response(prompt=prompt)
+        stream_result = self._stream_model_chat_response(prompt=prompt, messages=messages)
+        if bool(stream_result.get("handled")):
+            streamed_text = str(stream_result.get("text", ""))
+            if streamed_text:
+                try:
+                    self._append_stream_chat_record(
+                        input_text=text,
+                        output_text=streamed_text,
+                        complete=bool(stream_result.get("complete", False)),
+                    )
+                except Exception:
+                    # Keep streaming UX non-fatal even if chat persistence fails.
+                    pass
+            return True
+        return False
 
     def print_route_result(self, result: Dict[str, Any]) -> None:
         self._track_active_folder(result)
