@@ -17,11 +17,24 @@ def _client():
 def test_route_text_reuses_same_conversation_id(monkeypatch):
     client = _client()
     captured_payloads = []
+    captured_headers = []
+    auth_login_calls = []
 
-    def _fake_request(method: str, url: str, timeout_sec: float, payload=None):  # noqa: ANN001
+    def _fake_request(method: str, url: str, timeout_sec: float, payload=None, headers=None):  # noqa: ANN001
+        _ = timeout_sec
+        if url.endswith("/api/v1/auth/login"):
+            auth_login_calls.append(dict(payload or {}))
+            return {
+                "ok": True,
+                "token": "tok_cli_test",
+                "refresh_token": "rfr_cli_test",
+                "session": {"auth_session_id": "sess_cli_test"},
+            }
+
         assert method == "POST"
         assert url.endswith("/api/v1/messages")
         captured_payloads.append(dict(payload or {}))
+        captured_headers.append(dict(headers or {}))
         return {
             "ok": True,
             "conversation_id": str(payload.get("conversation_id", "")),
@@ -39,12 +52,72 @@ def test_route_text_reuses_same_conversation_id(monkeypatch):
     assert first["ok"] is True
     assert second["ok"] is True
     assert len(captured_payloads) == 2
+    assert len(auth_login_calls) == 1
 
     first_id = str(captured_payloads[0].get("conversation_id", "")).strip()
     second_id = str(captured_payloads[1].get("conversation_id", "")).strip()
     assert first_id
     assert first_id == second_id
     assert client.conversation_id == first_id
+    assert all(item.get("Authorization") == "Bearer tok_cli_test" for item in captured_headers)
+
+
+def test_route_text_registers_then_logs_in_when_user_missing(monkeypatch):
+    client = _client()
+    login_calls = 0
+    register_calls = 0
+    message_headers = []
+
+    def _fake_request(method: str, url: str, timeout_sec: float, payload=None, headers=None):  # noqa: ANN001
+        nonlocal login_calls, register_calls
+        _ = (method, timeout_sec, payload)
+        if url.endswith("/api/v1/auth/login"):
+            login_calls += 1
+            if login_calls == 1:
+                raise cli_module.HttpRequestError(
+                    status_code=401,
+                    url=url,
+                    raw_body=json.dumps(
+                        {
+                            "ok": False,
+                            "error": {
+                                "code": "E_AUTH_REQUIRED",
+                                "message": "invalid credentials",
+                            },
+                        },
+                        ensure_ascii=True,
+                    ),
+                )
+            return {
+                "ok": True,
+                "token": "tok_cli_after_register",
+                "refresh_token": "rfr_cli_after_register",
+                "session": {"auth_session_id": "sess_cli_after_register"},
+            }
+
+        if url.endswith("/api/v1/auth/register"):
+            register_calls += 1
+            return {"ok": True, "user": {"username": "cli"}}
+
+        assert url.endswith("/api/v1/messages")
+        message_headers.append(dict(headers or {}))
+        return {
+            "ok": True,
+            "conversation_id": str(payload.get("conversation_id", "")),
+            "status": "routed",
+            "analysis": {"canonical_intent": "model.chat.complete"},
+            "route_message": {"intent": "model.chat.complete"},
+            "route_response": {"intent": "model.chat.completed", "payload": {"text": "ok"}},
+        }
+
+    monkeypatch.setattr(cli_module, "_request", _fake_request)
+
+    response = client.route_text("hello")
+
+    assert response["ok"] is True
+    assert register_calls == 1
+    assert login_calls == 2
+    assert message_headers[0]["Authorization"] == "Bearer tok_cli_after_register"
 
 
 def test_model_chat_complete_streams_for_fallback_reason():

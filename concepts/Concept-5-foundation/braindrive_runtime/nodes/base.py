@@ -20,6 +20,7 @@ class NodeContext:
     workflow_state: "WorkflowState | None" = None
     env: Mapping[str, str] | None = None
     route_message: Callable[[Dict[str, Any]], Dict[str, Any]] | None = None
+    router_registry: Callable[[], Dict[str, Any]] | None = None
 
 
 class ProtocolNode:

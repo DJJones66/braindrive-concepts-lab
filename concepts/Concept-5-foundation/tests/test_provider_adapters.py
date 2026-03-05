@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import socket
+from pathlib import Path
 from typing import Any, Dict
 from urllib import error
 
@@ -230,3 +231,95 @@ def test_provider_resolver_builds_expected_adapter_types() -> None:
     )
     assert isinstance(openrouter, OpenRouterAdapter)
     assert isinstance(ollama, OllamaAdapter)
+
+
+def test_provider_resolver_loads_synthetic_provider_from_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plugin_dir = tmp_path / "plugin"
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "synthetic_provider.py").write_text(
+        "\n".join(
+            [
+                "from __future__ import annotations",
+                "",
+                "from braindrive_runtime.providers.base import ProviderAdapter, ProviderCatalogResult, ProviderChatResult",
+                "",
+                "class SyntheticAdapter(ProviderAdapter):",
+                "    provider_name = 'synthetic'",
+                "",
+                "    def __init__(self, response_prefix: str = 'synthetic') -> None:",
+                "        self.response_prefix = response_prefix",
+                "",
+                "    def validate_catalog(self, parent_message_id):",
+                "        return None",
+                "",
+                "    def validate(self, request):",
+                "        return None",
+                "",
+                "    def chat_completion(self, request):",
+                "        text = f\"{self.response_prefix}:{request.model}:{request.prompt}\"",
+                "        return ProviderChatResult(text=text), None",
+                "",
+                "    def catalog(self, parent_message_id):",
+                "        return ProviderCatalogResult(models=['synthetic/default'], fallback=False)",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    registry_dir = tmp_path / "registry"
+    registry_dir.mkdir(parents=True, exist_ok=True)
+    (registry_dir / "synthetic.json").write_text(
+        json.dumps(
+            {
+                "provider": "synthetic",
+                "adapter_factory": "synthetic_provider:SyntheticAdapter",
+                "adapter_kwargs": {
+                    "response_prefix": {
+                        "env": "BRAINDRIVE_SYNTHETIC_RESPONSE_PREFIX",
+                        "default": "synthetic",
+                    }
+                },
+                "model_node": {
+                    "node_id": "node.model.synthetic",
+                    "priority": 150,
+                    "label": "Synthetic",
+                },
+                "config": {
+                    "base_url_env": "",
+                    "base_url_default": "",
+                    "base_url_required": False,
+                    "default_model_env": "BRAINDRIVE_SYNTHETIC_DEFAULT_MODEL",
+                    "required_env": [],
+                    "required_env_messages": {},
+                    "startup_notice": "synthetic provider adapter",
+                },
+            },
+            ensure_ascii=True,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.syspath_prepend(str(plugin_dir))
+    adapter = resolve_provider_adapter(
+        "synthetic",
+        {
+            "BRAINDRIVE_PROVIDER_REGISTRY_DIR": str(registry_dir),
+            "BRAINDRIVE_SYNTHETIC_RESPONSE_PREFIX": "custom",
+        },
+    )
+
+    result, err = adapter.chat_completion(
+        ProviderChatRequest(
+            model="synthetic/default",
+            prompt="hello",
+            llm={},
+            parent_message_id="msg-synth",
+        )
+    )
+    assert err is None
+    assert result is not None
+    assert result.text == "custom:synthetic/default:hello"

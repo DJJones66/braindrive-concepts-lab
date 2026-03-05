@@ -6,6 +6,7 @@ from .git_ops import GitOpsNode
 from .memory_fs import MemoryFsNode
 from .model_ollama import OllamaModelNode
 from .model_openrouter import OpenRouterModelNode
+from .model_provider import ModelProviderNode
 from .runtime_bootstrap import RuntimeBootstrapNode
 from .session_state import SessionStateNode
 from .scrapling import ScraplingNode
@@ -21,6 +22,7 @@ __all__ = [
     "MemoryFsNode",
     "OpenRouterModelNode",
     "OllamaModelNode",
+    "ModelProviderNode",
     "RuntimeBootstrapNode",
     "SessionStateNode",
     "ScraplingNode",

@@ -15,6 +15,7 @@ from .nodes import (
     FolderWorkflowNode,
     GitOpsNode,
     MemoryFsNode,
+    ModelProviderNode,
     OllamaModelNode,
     OpenRouterModelNode,
     RuntimeBootstrapNode,
@@ -25,8 +26,10 @@ from .nodes import (
 )
 from .nodes.base import NodeContext, ProtocolNode
 from .persistence import Persistence
+from .providers.registry import list_model_provider_specs
 from .protocol import new_uuid
 from .router import RouterCore
+from .security import LEGACY_DEFAULT_REGISTRATION_TOKEN, validate_registration_token
 from .state import WorkflowState
 
 
@@ -45,7 +48,7 @@ class BrainDriveRuntime:
         data_root: Path,
         env: Optional[Dict[str, str]] = None,
         user_config_path: Optional[Path] = None,
-        registration_token: str = "braindrive-mvp-dev-token",
+        registration_token: Optional[str] = None,
     ) -> None:
         self.library_root = library_root
         self.data_root = data_root
@@ -55,20 +58,28 @@ class BrainDriveRuntime:
         self.env = dict(os.environ)
         if env:
             self.env.update(env)
+        if user_config_path is not None:
+            self.env["BRAINDRIVE_USER_CONFIG_PATH"] = str(user_config_path)
 
         self.persistence = Persistence(self.data_root)
         self.workflow_state = WorkflowState(self.persistence)
         self.config = ConfigResolver(env=self.env, user_config_path=user_config_path)
+        resolved_registration_token = registration_token
+        if resolved_registration_token is None:
+            resolved_registration_token = f"runtime-{new_uuid()}"
+        if str(resolved_registration_token).strip() == LEGACY_DEFAULT_REGISTRATION_TOKEN:
+            resolved_registration_token = f"runtime-{new_uuid()}"
+        resolved_registration_token = validate_registration_token(str(resolved_registration_token))
         self.router = RouterCore(
             persistence=self.persistence,
             config=self.config,
-            registration_token=registration_token,
+            registration_token=resolved_registration_token,
             heartbeat_ttl_sec=15.0,
             library_root=self.library_root,
         )
         self.intent_router = IntentRouterNL(self.router)
 
-        self.registration_token = registration_token
+        self.registration_token = resolved_registration_token
         self.test_endpoints_enabled = str(self.env.get("BRAINDRIVE_ENABLE_TEST_ENDPOINTS", "false")).lower() == "true"
 
         self.nodes: Dict[str, RegisteredNode] = {}
@@ -82,6 +93,7 @@ class BrainDriveRuntime:
             workflow_state=self.workflow_state,
             env=self.env,
             route_message=self.router.route,
+            router_registry=self.router.registry_snapshot,
         )
 
     def _register_default_nodes(self) -> None:
@@ -94,12 +106,36 @@ class BrainDriveRuntime:
             SkillWorkflowNode(self._ctx()),
             ApprovalGateNode(self._ctx()),
             GitOpsNode(self._ctx()),
-            OpenRouterModelNode(self._ctx()),
-            OllamaModelNode(self._ctx()),
             ScraplingNode(self._ctx()),
             WebConsoleNode(self._ctx()),
             AuditLogNode(self._ctx()),
         ]
+
+        model_nodes: List[ProtocolNode] = []
+        try:
+            provider_specs = list_model_provider_specs(self.env)
+        except Exception:
+            provider_specs = []
+
+        for spec in provider_specs:
+            model_nodes.append(
+                ModelProviderNode(
+                    self._ctx(),
+                    provider=spec.provider,
+                    node_id=spec.node_id,
+                    priority=spec.priority,
+                    label=spec.label,
+                )
+            )
+
+        # Migration fallback: keep explicit built-ins if registry loading fails.
+        if not model_nodes:
+            model_nodes = [
+                OpenRouterModelNode(self._ctx()),
+                OllamaModelNode(self._ctx()),
+            ]
+
+        defaults.extend(model_nodes)
 
         for node in defaults:
             self.register_node(node)

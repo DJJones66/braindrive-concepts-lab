@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Dict, List
 
 from ..protocol import make_error, make_response
+from ..workflow_conventions import default_workflow_config_payload, workflow_config_path
 from .base import ProtocolNode, cap
 
 SKILL_TEMPLATES = {
@@ -170,6 +172,16 @@ class RuntimeBootstrapNode(ProtocolNode):
         except OSError:
             return False
 
+    def _ensure_workflow_config(self) -> Dict[str, str]:
+        target = workflow_config_path(self.ctx.library_root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() and target.is_file():
+            return {"path": str(target), "status": "existing"}
+
+        payload = default_workflow_config_payload()
+        target.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+        return {"path": str(target), "status": "created"}
+
     def handle(self, message: Dict[str, object]) -> Dict[str, object]:
         intent = message.get("intent")
 
@@ -195,6 +207,7 @@ class RuntimeBootstrapNode(ProtocolNode):
             return make_error("E_NODE_ERROR", "Library folder not writable", message.get("message_id"))
 
         skills = self._ensure_skills()
+        workflow_config = self._ensure_workflow_config()
 
         return make_response(
             "system.bootstrap.ready",
@@ -202,6 +215,7 @@ class RuntimeBootstrapNode(ProtocolNode):
                 "ready": True,
                 "library_root": str(self.ctx.library_root),
                 "skills": skills,
+                "workflow_config": workflow_config,
                 "platform": os.name,
             },
             message.get("message_id"),

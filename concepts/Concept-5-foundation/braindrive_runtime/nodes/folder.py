@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..protocol import make_error, make_response, new_uuid
+from ..workflow_conventions import load_workflow_conventions
 from .base import ProtocolNode, cap
 
 
@@ -12,11 +13,15 @@ class FolderWorkflowNode(ProtocolNode):
     node_id = "node.workflow.folder"
     priority = 140
 
+    def __init__(self, ctx) -> None:
+        super().__init__(ctx)
+        self._workflow = load_workflow_conventions(self.ctx.library_root, self.ctx.persistence)
+
     def capabilities(self) -> List:
         return [
             cap(
                 name="folder.create",
-                description="Create topic folder with AGENT.md",
+                description=f"Create topic folder with {self._workflow.agent_path}",
                 input_schema={"type": "object", "required": ["topic"]},
                 risk_class="mutate",
                 required_extensions=[],
@@ -113,7 +118,7 @@ class FolderWorkflowNode(ProtocolNode):
 
     def _load_context_docs(self, folder_dir: Path) -> Dict[str, str]:
         docs = {}
-        for filename in ["AGENT.md", "spec.md", "plan.md"]:
+        for filename in self._workflow.context_docs:
             path = folder_dir / filename
             if path.exists() and path.is_file():
                 docs[filename] = path.read_text(encoding="utf-8")
@@ -184,7 +189,8 @@ class FolderWorkflowNode(ProtocolNode):
                 return make_error("E_BAD_MESSAGE", "topic is required", message.get("message_id"))
 
             folder = str(payload.get("folder", "")).strip() or self._slug(topic)
-            agent_rel_path = f"{folder}/AGENT.md"
+            agent_filename = self._workflow.agent_path
+            agent_rel_path = f"{folder}/{agent_filename}"
             agent_path = self.ctx.library_root / agent_rel_path
             if not agent_path.exists():
                 write_response = self._route_session(
@@ -213,7 +219,7 @@ class FolderWorkflowNode(ProtocolNode):
                 if write_response.get("intent") != "memory.write.applied":
                     return make_error(
                         "E_NODE_ERROR",
-                        "folder.create failed to persist AGENT.md through memory contract",
+                        f"folder.create failed to persist {agent_filename} through memory contract",
                         message.get("message_id"),
                     )
 

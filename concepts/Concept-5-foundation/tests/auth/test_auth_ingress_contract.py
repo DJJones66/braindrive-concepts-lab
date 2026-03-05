@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Dict
 
 from services import gateway_adapter_service as gateway
 
@@ -15,73 +15,19 @@ def _reset_state(monkeypatch) -> None:
     monkeypatch.setattr(gateway, "_persist_state", lambda: None)
 
 
-def test_extract_auth_context_accepts_valid_identity(monkeypatch):
-    _reset_state(monkeypatch)
-    handler = _FakeHandler()
-
-    auth_context, auth_error, token = gateway._extract_auth_context(
-        handler,
-        {
-            "extensions": {
-                "identity": {
-                    "actor_id": "user.contract",
-                    "roles": ["operator"],
-                    "actor_type": "user",
-                    "scopes": ["chat:write"],
-                }
-            }
-        },
-        allow_session_fallback=False,
-        require_identity=True,
-    )
-
-    assert auth_error is None
-    assert token == ""
-    assert isinstance(auth_context, dict)
-    assert auth_context["actor_id"] == "user.contract"
-    assert auth_context["roles"] == ["operator"]
-    assert auth_context["scopes"] == ["chat:write"]
-
-
-def test_extract_auth_context_rejects_missing_actor_id(monkeypatch):
+def test_extract_auth_context_defaults_to_fail_closed_without_session(monkeypatch):
     _reset_state(monkeypatch)
     handler = _FakeHandler()
 
     auth_context, auth_error, _ = gateway._extract_auth_context(
         handler,
-        {"extensions": {"identity": {"roles": ["operator"]}}},
-        allow_session_fallback=False,
-        require_identity=True,
+        {"extensions": {"identity": {"actor_id": "user.contract"}}},
     )
 
     assert auth_context is None
-    assert auth_error is not None
+    assert isinstance(auth_error, dict)
     assert auth_error["code"] == "E_AUTH_REQUIRED"
-
-
-def test_extract_auth_context_normalizes_roles_and_scopes(monkeypatch):
-    _reset_state(monkeypatch)
-    handler = _FakeHandler()
-
-    auth_context, auth_error, _ = gateway._extract_auth_context(
-        handler,
-        {
-            "extensions": {
-                "identity": {
-                    "actor_id": "user.normalize",
-                    "roles": " operator, admin ",
-                    "scopes": "chat:write, git:mutate ",
-                }
-            }
-        },
-        allow_session_fallback=False,
-        require_identity=True,
-    )
-
-    assert auth_error is None
-    assert isinstance(auth_context, dict)
-    assert auth_context["roles"] == ["operator", "admin"]
-    assert auth_context["scopes"] == ["chat:write", "git:mutate"]
+    assert "valid session is required" in str(auth_error.get("message", ""))
 
 
 def test_extract_auth_context_uses_session_when_present(monkeypatch):
@@ -97,8 +43,6 @@ def test_extract_auth_context_uses_session_when_present(monkeypatch):
     auth_context, auth_error, extracted = gateway._extract_auth_context(
         handler,
         {},
-        allow_session_fallback=False,
-        require_identity=True,
     )
 
     assert auth_error is None
@@ -106,3 +50,18 @@ def test_extract_auth_context_uses_session_when_present(monkeypatch):
     assert isinstance(auth_context, dict)
     assert isinstance(auth_context.get("auth_session_id"), str)
     assert auth_context.get("auth_session_id", "").strip()
+
+
+def test_extract_auth_context_rejects_invalid_api_key(monkeypatch):
+    _reset_state(monkeypatch)
+    monkeypatch.setattr(gateway, "ALLOWED_API_KEYS", {"valid-key"})
+    handler = _FakeHandler(headers={"X-API-Key": "bad-key"})
+
+    auth_context, auth_error, _ = gateway._extract_auth_context(
+        handler,
+        {},
+    )
+
+    assert auth_context is None
+    assert isinstance(auth_error, dict)
+    assert auth_error["code"] == "E_AUTH_FORBIDDEN"

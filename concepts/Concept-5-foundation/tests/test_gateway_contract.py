@@ -43,7 +43,7 @@ def test_extract_auth_context_uses_session_token(monkeypatch):
     token = str(session["token"])
 
     handler = _FakeHandler(headers={"Authorization": f"Bearer {token}"})
-    auth_context, auth_error, extracted = gateway._extract_auth_context(handler, {}, allow_session_fallback=False)
+    auth_context, auth_error, extracted = gateway._extract_auth_context(handler, {})
 
     assert auth_error is None
     assert auth_context is not None

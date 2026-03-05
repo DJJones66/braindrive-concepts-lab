@@ -35,7 +35,7 @@ DEFAULT_LIBRARY_ROOT = PROJECT_ROOT / "data" / "library"
 LIBRARY_ROOT = Path(os.getenv("BRAINDRIVE_LIBRARY_ROOT", str(DEFAULT_LIBRARY_ROOT)))
 HTTP_TIMEOUT_SEC = float(os.getenv("GATEWAY_HTTP_TIMEOUT_SEC", "70.0"))
 AUTH_REQUIRED = _env_bool("GATEWAY_AUTH_REQUIRED", True)
-ENFORCE_SESSION = _env_bool("GATEWAY_ENFORCE_SESSION", False)
+ENFORCE_SESSION = _env_bool("GATEWAY_ENFORCE_SESSION", True)
 ENABLE_LEGACY_GATEWAY_ROUTES = _env_bool("GATEWAY_ENABLE_LEGACY_COMPAT_ROUTES", False)
 CORE_CONTRACT_STRICT = _env_bool("GATEWAY_CORE_CONTRACT_STRICT", False)
 PROVIDER_CONTEXT_ENABLED = _env_bool("GATEWAY_PROVIDER_CONTEXT_ENABLED", True)
@@ -108,25 +108,6 @@ def _normalize_scopes(raw: Any) -> List[str]:
     return [item.strip() for item in text.split(",") if item.strip()]
 
 
-def _identity_from_body(body: Dict[str, Any]) -> Dict[str, Any]:
-    extensions = body.get("extensions", {})
-    if isinstance(extensions, dict):
-        identity = extensions.get("identity", {})
-        if isinstance(identity, dict):
-            return identity
-
-    identity = body.get("identity", {})
-    if isinstance(identity, dict):
-        return identity
-
-    return {
-        "actor_id": body.get("actor_id", ""),
-        "roles": body.get("roles", []),
-        "actor_type": body.get("actor_type", DEFAULT_ACTOR_TYPE),
-        "scopes": body.get("scopes", []),
-    }
-
-
 def _hash_password(password: str) -> str:
     return hashlib.sha256(f"{AUTH_SALT}:{password}".encode("utf-8")).hexdigest()
 
@@ -197,29 +178,9 @@ def _build_auth_context_from_session(session: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _build_auth_context_from_identity(handler: BaseHTTPRequestHandler, body: Dict[str, Any]) -> Dict[str, Any]:
-    identity = _identity_from_body(body)
-    actor_id = str(identity.get("actor_id", "")).strip() or str(handler.headers.get("X-Actor-Id", "")).strip()
-    roles = _normalize_roles(identity.get("roles", handler.headers.get("X-Actor-Roles", "operator")))
-    actor_type = str(identity.get("actor_type", DEFAULT_ACTOR_TYPE)).strip() or DEFAULT_ACTOR_TYPE
-    scopes = _normalize_scopes(identity.get("scopes", []))
-
-    return {
-        "actor_id": actor_id,
-        "actor_type": actor_type,
-        "roles": roles,
-        "scopes": scopes,
-        "trace_id": str(new_uuid()),
-        "auth_session_id": "",
-    }
-
-
 def _extract_auth_context(
     handler: BaseHTTPRequestHandler,
     body: Dict[str, Any],
-    *,
-    allow_session_fallback: bool,
-    require_identity: bool = True,
 ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], str]:
     api_key = _extract_api_key(handler)
     if ALLOWED_API_KEYS and api_key not in ALLOWED_API_KEYS:
@@ -232,17 +193,10 @@ def _extract_auth_context(
     if isinstance(session, dict):
         return _build_auth_context_from_session(session), None, token
 
-    if ENFORCE_SESSION and not allow_session_fallback:
+    if ENFORCE_SESSION or AUTH_REQUIRED:
         return None, _auth_error("E_AUTH_REQUIRED", "valid session is required"), ""
 
-    context = _build_auth_context_from_identity(handler, body)
-    actor_id = str(context.get("actor_id", "")).strip()
-    if require_identity and not actor_id:
-        return None, _auth_error("E_AUTH_REQUIRED", "actor_id is required"), ""
-    if AUTH_REQUIRED and not actor_id and not allow_session_fallback:
-        return None, _auth_error("E_AUTH_REQUIRED", "actor_id is required"), ""
-
-    return context, None, ""
+    return None, _auth_error("E_AUTH_REQUIRED", "valid session is required"), ""
 
 
 def _lookup_user(username: str) -> Optional[Dict[str, Any]]:
@@ -706,7 +660,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         return 200, response, self._set_session_cookie(str(refreshed.get("token", "")))
 
     def _handle_conversation_create(self, body: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
-        auth_context, auth_error, _ = _extract_auth_context(self, body, allow_session_fallback=False)
+        auth_context, auth_error, _ = _extract_auth_context(self, body)
         if auth_error is not None:
             return 401, {"ok": False, "error": auth_error}
 
@@ -728,7 +682,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         return (200 if result.get("ok") else 400), result
 
     def _handle_messages(self, body: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
-        auth_context, auth_error, _ = _extract_auth_context(self, body, allow_session_fallback=False)
+        auth_context, auth_error, _ = _extract_auth_context(self, body)
         if auth_error is not None:
             return 401, {"ok": False, "error": auth_error}
 
@@ -763,7 +717,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         return (200 if result.get("ok") else 502), result
 
     def _handle_console_open(self, body: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
-        auth_context, auth_error, _ = _extract_auth_context(self, body, allow_session_fallback=False)
+        auth_context, auth_error, _ = _extract_auth_context(self, body)
         if auth_error is not None:
             return 401, {"ok": False, "error": auth_error}
 
@@ -833,7 +787,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         return self._as_bdp_error(code, message)
 
     def _handle_console_close(self, body: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
-        auth_context, auth_error, _ = _extract_auth_context(self, body, allow_session_fallback=False)
+        auth_context, auth_error, _ = _extract_auth_context(self, body)
         if auth_error is not None:
             return 401, {"ok": False, "error": auth_error}
 
@@ -843,7 +797,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         return (200 if result.get("ok") else 502), result
 
     def _handle_console_input(self, body: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
-        auth_context, auth_error, _ = _extract_auth_context(self, body, allow_session_fallback=False)
+        auth_context, auth_error, _ = _extract_auth_context(self, body)
         if auth_error is not None:
             return 401, {"ok": False, "error": auth_error}
 
@@ -1175,6 +1129,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    print(
+        "gateway.api auth mode: "
+        f"auth_required={AUTH_REQUIRED} "
+        f"enforce_session={ENFORCE_SESSION}"
+    )
     if ENABLE_LEGACY_GATEWAY_ROUTES:
         print("gateway.api warning: legacy /gateway/* compatibility routes enabled")
     server = ThreadingHTTPServer(("0.0.0.0", PORT), GatewayHandler)

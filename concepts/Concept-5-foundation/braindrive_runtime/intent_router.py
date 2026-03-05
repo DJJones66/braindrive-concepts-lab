@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import re
 import time
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .constants import E_NO_ROUTE
 from .protocol import make_error, new_uuid
 from .router import RouterCore
+from .workflow_conventions import load_workflow_conventions
 
 
 class IntentRouterNL:
@@ -16,6 +18,10 @@ class IntentRouterNL:
         self.catalog_ttl_sec = catalog_ttl_sec
         self._catalog_cached: Dict[str, Any] = {}
         self._catalog_loaded_at = 0.0
+        library_root_raw = getattr(self.router, "library_root", None)
+        library_root = library_root_raw if isinstance(library_root_raw, Path) else Path(".")
+        persistence = getattr(self.router, "persistence", None)
+        self._workflow = load_workflow_conventions(library_root, persistence)
 
     def _catalog(self) -> Dict[str, Any]:
         now = time.time()
@@ -177,6 +183,13 @@ class IntentRouterNL:
             return history
         return [*history, {"role": "user", "content": current_prompt}]
 
+    def _alias_tokens(self, intent: str) -> tuple[str, ...]:
+        return self._workflow.intent_aliases.get(intent, tuple())
+
+    def _matches_alias(self, lower_text: str, intent: str) -> bool:
+        tokens = self._alias_tokens(intent)
+        return any(token in lower_text for token in tokens)
+
     @staticmethod
     def _extract_urls(text: str) -> list[str]:
         raw = re.findall(r"https?://[^\s,]+", text, flags=re.IGNORECASE)
@@ -289,7 +302,7 @@ class IntentRouterNL:
             plan.update(scrape_plan)
 
         elif self._resolve_awaiting_interview_answer(context) and not any(
-            token in lower for token in ["complete interview", "finish interview"]
+            token in lower for token in self._alias_tokens("workflow.interview.complete")
         ):
             answer = cleaned.split(":", 1)[1].strip() if ":" in cleaned else cleaned
             plan.update(
@@ -444,7 +457,7 @@ class IntentRouterNL:
                 }
             )
 
-        elif any(token in lower for token in ["start interview", "interview me"]):
+        elif self._matches_alias(lower, "workflow.interview.start"):
             plan.update(
                 {
                     "canonical_intent": "workflow.interview.start",
@@ -454,7 +467,7 @@ class IntentRouterNL:
                 }
             )
 
-        elif any(token in lower for token in ["continue interview", "my answer", "answer:"]):
+        elif self._matches_alias(lower, "workflow.interview.continue"):
             answer = cleaned.split(":", 1)[1].strip() if ":" in cleaned else cleaned
             plan.update(
                 {
@@ -465,7 +478,7 @@ class IntentRouterNL:
                 }
             )
 
-        elif any(token in lower for token in ["complete interview", "finish interview"]):
+        elif self._matches_alias(lower, "workflow.interview.complete"):
             plan.update(
                 {
                     "canonical_intent": "workflow.interview.complete",
@@ -475,7 +488,7 @@ class IntentRouterNL:
                 }
             )
 
-        elif any(token in lower for token in ["generate spec", "draft spec"]):
+        elif self._matches_alias(lower, "workflow.spec.generate"):
             plan.update(
                 {
                     "canonical_intent": "workflow.spec.generate",
@@ -485,7 +498,7 @@ class IntentRouterNL:
                 }
             )
 
-        elif any(token in lower for token in ["save spec", "propose spec"]):
+        elif self._matches_alias(lower, "workflow.spec.propose_save"):
             plan.update(
                 {
                     "canonical_intent": "workflow.spec.propose_save",
@@ -497,7 +510,7 @@ class IntentRouterNL:
                 }
             )
 
-        elif any(token in lower for token in ["generate plan", "draft plan"]):
+        elif self._matches_alias(lower, "workflow.plan.generate"):
             plan.update(
                 {
                     "canonical_intent": "workflow.plan.generate",
@@ -507,7 +520,7 @@ class IntentRouterNL:
                 }
             )
 
-        elif any(token in lower for token in ["save plan", "propose plan"]):
+        elif self._matches_alias(lower, "workflow.plan.propose_save"):
             plan.update(
                 {
                     "canonical_intent": "workflow.plan.propose_save",
@@ -562,7 +575,7 @@ class IntentRouterNL:
                     "risk_class": "mutate",
                     "required_confirmation": True,
                     "reason_codes": ["keyword_memory_write"],
-                    "payload": {"path": "notes.md", "content": cleaned},
+                    "payload": {"path": self._workflow.notes_path, "content": cleaned},
                 }
             )
 
@@ -574,7 +587,7 @@ class IntentRouterNL:
                     "risk_class": "mutate",
                     "required_confirmation": True,
                     "reason_codes": ["keyword_memory_edit"],
-                    "payload": {"path": "notes.md", "content": cleaned},
+                    "payload": {"path": self._workflow.notes_path, "content": cleaned},
                 }
             )
 
@@ -586,7 +599,7 @@ class IntentRouterNL:
                     "risk_class": "destructive",
                     "required_confirmation": True,
                     "reason_codes": ["keyword_memory_delete"],
-                    "payload": {"path": "notes.md"},
+                    "payload": {"path": self._workflow.notes_path},
                 }
             )
 

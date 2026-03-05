@@ -19,8 +19,7 @@ from braindrive_runtime.nodes import (
     FolderWorkflowNode,
     GitOpsNode,
     MemoryFsNode,
-    OllamaModelNode,
-    OpenRouterModelNode,
+    ModelProviderNode,
     RuntimeBootstrapNode,
     SessionStateNode,
     ScraplingNode,
@@ -29,14 +28,20 @@ from braindrive_runtime.nodes import (
 )
 from braindrive_runtime.nodes.base import NodeContext, ProtocolNode
 from braindrive_runtime.persistence import Persistence
+from braindrive_runtime.providers.registry import ModelProviderSpec, list_model_provider_specs
 from braindrive_runtime.protocol import http_post_json, make_error, validate_core
+from braindrive_runtime.security import validate_registration_token
 from braindrive_runtime.service_registration import start_registration_loop
 from braindrive_runtime.state import WorkflowState
 
 PORT = int(os.getenv("NODE_PORT", "8110"))
 NODE_KIND = os.getenv("NODE_KIND", "chat_general").strip().lower()
 NODE_ENDPOINT_URL = os.getenv("NODE_ENDPOINT_URL", f"http://localhost:{PORT}/bdp")
-REGISTRATION_TOKEN = os.getenv("ROUTER_REGISTRATION_TOKEN", "braindrive-mvp-dev-token")
+try:
+    REGISTRATION_TOKEN = validate_registration_token(os.getenv("ROUTER_REGISTRATION_TOKEN", ""))
+except ValueError as exc:
+    print(f"[error] {exc}", file=sys.stderr)
+    raise SystemExit(2)
 REGISTER_URL = os.getenv("ROUTER_REGISTER_URL", "http://node-router:8080/router/node/register")
 HEARTBEAT_URL = os.getenv("ROUTER_HEARTBEAT_URL", "http://node-router:8080/router/node/heartbeat")
 HEARTBEAT_SEC = float(os.getenv("ROUTER_HEARTBEAT_SEC", "5.0"))
@@ -58,8 +63,6 @@ NODE_MAP: Dict[str, Type[ProtocolNode]] = {
     "session_state": SessionStateNode,
     "approval_gate": ApprovalGateNode,
     "git_ops": GitOpsNode,
-    "model_openrouter": OpenRouterModelNode,
-    "model_ollama": OllamaModelNode,
     "scrapling": ScraplingNode,
     "web_console": WebConsoleNode,
     "chat_general": ChatGeneralNode,
@@ -67,11 +70,43 @@ NODE_MAP: Dict[str, Type[ProtocolNode]] = {
 }
 
 
-def build_node() -> ProtocolNode:
-    node_cls = NODE_MAP.get(NODE_KIND)
-    if node_cls is None:
-        raise ValueError(f"Unknown NODE_KIND: {NODE_KIND}")
+def _provider_specs() -> Dict[str, ModelProviderSpec]:
+    specs = list_model_provider_specs(dict(os.environ))
+    return {spec.provider: spec for spec in specs}
 
+
+def _provider_from_node_kind(node_kind: str, providers: Dict[str, ModelProviderSpec]) -> str:
+    if node_kind in {"model_provider", "model"}:
+        explicit = os.getenv("NODE_MODEL_PROVIDER", "").strip().lower()
+        if explicit:
+            return explicit
+        return os.getenv("BRAINDRIVE_DEFAULT_PROVIDER", "").strip().lower()
+
+    if node_kind.startswith("model_provider:"):
+        return node_kind.partition(":")[2].strip().lower()
+
+    if node_kind.startswith("model_"):
+        candidate = node_kind[len("model_") :].strip().lower()
+        if candidate in providers:
+            return candidate
+    return ""
+
+
+def _build_model_provider_node(ctx: NodeContext, provider: str, providers: Dict[str, ModelProviderSpec]) -> ProtocolNode:
+    spec = providers.get(provider)
+    if spec is None:
+        available = ", ".join(sorted(providers.keys()))
+        raise ValueError(f"Unknown model provider '{provider}'. Available providers: {available}")
+    return ModelProviderNode(
+        ctx,
+        provider=spec.provider,
+        node_id=spec.node_id,
+        priority=spec.priority,
+        label=spec.label,
+    )
+
+
+def build_node() -> ProtocolNode:
     persistence = Persistence(RUNTIME_DIR)
     workflow_state = WorkflowState(persistence)
 
@@ -86,6 +121,15 @@ def build_node() -> ProtocolNode:
         env=dict(os.environ),
         route_message=_route_message,
     )
+
+    providers = _provider_specs()
+    provider = _provider_from_node_kind(NODE_KIND, providers)
+    if provider:
+        return _build_model_provider_node(ctx, provider, providers)
+
+    node_cls = NODE_MAP.get(NODE_KIND)
+    if node_cls is None:
+        raise ValueError(f"Unknown NODE_KIND: {NODE_KIND}")
     return node_cls(ctx)
 
 

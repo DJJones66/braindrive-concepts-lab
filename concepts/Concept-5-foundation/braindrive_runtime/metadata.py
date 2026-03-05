@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from .constants import MODEL_PROVIDERS, RISK_CLASSES
+from .constants import RISK_CLASSES
 
 
 def parse_version(version: str) -> Tuple[int, int, int]:
@@ -49,7 +49,7 @@ class CapabilityMetadata:
             return f"capability {self.name} invalid idempotency"
         if self.side_effect_scope not in {"none", "file", "external"}:
             return f"capability {self.name} invalid side_effect_scope"
-        if self.provider is not None and self.provider not in MODEL_PROVIDERS:
+        if self.provider is not None and not str(self.provider).strip():
             return f"capability {self.name} invalid provider"
         if self.visibility not in {"public", "internal"}:
             return f"capability {self.name} invalid visibility"

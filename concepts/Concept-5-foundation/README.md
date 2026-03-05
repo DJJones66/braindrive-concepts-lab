@@ -47,6 +47,8 @@ cd /home/hacker/Projects/BrainDrive-Protocal/BrainDrive-MVP
 - create `.env` from `.env.example` if missing
 - ensure `data/runtime` and `data/library` exist
 - start compose with your current host `uid:gid` (no manual `.env` edit needed)
+- derive `NETWORK_BIND_ADDR` from `NETWORK_EXPOSED` (`true` -> `0.0.0.0`, `false` -> `127.0.0.1`)
+- generate and persist a unique `ROUTER_REGISTRATION_TOKEN` in `.env` when missing/insecure (dev mode)
 - wait for `router.core` and `intent.router.natural-language` health endpoints
 
 Manual startup (if preferred):
@@ -54,7 +56,10 @@ Manual startup (if preferred):
 ```bash
 cd /home/hacker/Projects/BrainDrive-Protocal/BrainDrive-MVP
 cp -n .env.example .env
-HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up -d --build
+NETWORK_EXPOSED=true  # set false for localhost-only publish
+NETWORK_BIND_ADDR=$([ "${NETWORK_EXPOSED}" = "true" ] && echo "0.0.0.0" || echo "127.0.0.1")
+ROUTER_REGISTRATION_TOKEN=$(openssl rand -hex 24)
+HOST_UID=$(id -u) HOST_GID=$(id -g) NETWORK_BIND_ADDR="${NETWORK_BIND_ADDR}" ROUTER_REGISTRATION_TOKEN="${ROUTER_REGISTRATION_TOKEN}" docker compose up -d --build
 ```
 
 ## Terminal CLI App
@@ -105,8 +110,16 @@ CLI notes:
   - Restrict streaming to fallback chat only with `BRAINDRIVE_CLI_STREAM_FALLBACK_ONLY=true|false` (default `true`).
   - Verification mode: `BRAINDRIVE_CLI_STREAM_DIAGNOSTICS=true` prints
     provider/model plus `ttft`, chunk count, and total time after each streamed reply.
+  - Streaming uses provider credentials available in the running CLI environment.
+    If you update `.env`, restart/rebuild containers (`./scripts/bootstrap.sh`) before retesting streaming.
   - Foundation default keeps gateway-only ingress. CLI fallback to `/intent/route` is opt-in:
     `BRAINDRIVE_CLI_ALLOW_INTENT_FALLBACK=false` (set `true` only for compatibility windows).
+- Gateway auth default is fail-closed (`GATEWAY_ENFORCE_SESSION=true`).
+- CLI now establishes a gateway auth session on startup using `/api/v1/auth/*`.
+  - Default auth username/password are derived deterministically from
+    `BRAINDRIVE_CLI_AUTH_SEED` or `ROUTER_REGISTRATION_TOKEN`.
+  - Override with `BRAINDRIVE_CLI_AUTH_USERNAME` and `BRAINDRIVE_CLI_AUTH_PASSWORD`.
+  - Control auto-provision behavior with `BRAINDRIVE_CLI_AUTH_AUTO_REGISTER=true|false`.
 - Interactive startup prints a blue BrainDrive ASCII banner before health checks.
 - For operations requiring approval, CLI prompts for confirmation interactively.
 - If intent routing cannot map your prompt to a specific workflow/tool action, it defaults to model chat (`model.chat.complete`).
@@ -161,7 +174,6 @@ Set custom credentials/port in `.env` before use:
 ```bash
 DEV_WEBTERM_AUTH_USER=devadmin
 DEV_WEBTERM_AUTH_PASSWORD=replace-with-strong-password
-BRAINDRIVE_DEV_WEBTERM_BIND_ADDR=0.0.0.0
 BRAINDRIVE_DEV_WEBTERM_PORT=9494
 DEV_WEBTERM_LOG_LEVEL=2
 DEV_WEBTERM_THEME_BACKGROUND=#000000
@@ -169,15 +181,20 @@ DEV_WEBTERM_THEME_BACKGROUND=#000000
 
 Exposure control notes:
 
-1. Bind to local host only:
+1. Localhost-only publish for all host ports:
 ```bash
-BRAINDRIVE_DEV_WEBTERM_BIND_ADDR=127.0.0.1
+NETWORK_EXPOSED=false
 ```
-2. Bind to one LAN interface only (example):
+2. Expose published ports on all interfaces:
 ```bash
-BRAINDRIVE_DEV_WEBTERM_BIND_ADDR=10.1.2.149
+NETWORK_EXPOSED=true
 ```
-3. CIDR/IP allowlisting is best enforced at host firewall/reverse-proxy layer.
+3. Advanced override (specific interface only):
+```bash
+NETWORK_BIND_ADDR=10.1.2.149
+```
+4. CIDR/IP allowlisting is best enforced at host firewall/reverse-proxy layer.
+5. When `NETWORK_BIND_ADDR` is non-loopback, web terminal services refuse startup if password remains `change-me-now`.
 
 ## Dedicated CLI-Style Browser Terminal on 9493
 
@@ -207,6 +224,21 @@ Display tuning:
 TTY_WEBTERM_LOG_LEVEL=2
 TTY_WEBTERM_THEME_BACKGROUND=#000000
 ```
+
+## Gateway Web Console Target Resolution
+
+`/ui/terminal` target resolution is discovery-first:
+
+1. Discover active targets from router registry.
+2. Apply optional allowlist (`WEBTERM_TARGETS`) and denylist (`WEBTERM_TARGETS_DENYLIST`).
+3. Select target by order: explicit request target, then active configured default, then first discovered target.
+
+Deployment knobs:
+
+- `WEBTERM_TARGET_DISCOVERY_ENABLED=true|false`
+- `WEBTERM_TARGET_DISCOVERY_TTL_SEC`
+- `WEBTERM_TARGET_DISCOVERY_TIMEOUT_SEC`
+- `WEBTERM_REQUIRE_EXPLICIT_BASE_URLS=true|false` (recommended `true` for non-dev environments)
 
 ## Health Checks
 

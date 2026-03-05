@@ -95,6 +95,58 @@ def test_web_console_open_success_and_targets(tmp_path: Path):
     assert len(guides["payload"]["guides"]) >= 1
 
 
+def test_web_console_discovery_targets_filter_internal_nodes(tmp_path: Path):
+    runtime = _runtime(
+        tmp_path,
+        {
+            "WEBTERM_TARGETS": "",
+            "WEBTERM_TARGETS_DENYLIST": "",
+        },
+    )
+
+    targets = runtime.route(_msg("web.console.targets.list", {}, _identity()))
+    assert targets["intent"] == "web.console.targets"
+
+    listed = targets["payload"]["targets"]
+    assert isinstance(listed, list)
+    assert "node-memory-fs" in listed
+    assert "node-session-state" not in listed
+    assert "node-web-console" not in listed
+    assert str(targets["payload"].get("default_target", "")).strip() in listed
+
+
+def test_web_console_open_without_target_uses_discovered_fallback_when_default_inactive(tmp_path: Path):
+    runtime = _runtime(
+        tmp_path,
+        {
+            "WEBTERM_TARGETS": "node-router,node-memory-fs",
+            "WEBTERM_SSH_TARGET_DEFAULT": "node-router",
+        },
+    )
+    response = runtime.route(
+        _msg(
+            "web.console.session.open",
+            {"origin": "https://localhost:8443"},
+            _identity(),
+        )
+    )
+    assert response["intent"] == "web.console.session.ready"
+    assert str(response["payload"]["target"]) == "node-memory-fs"
+
+
+def test_web_console_open_denies_unknown_target(tmp_path: Path):
+    runtime = _runtime(tmp_path)
+    denied = runtime.route(
+        _msg(
+            "web.console.session.open",
+            {"origin": "https://localhost:8443", "target": "node-unknown"},
+            _identity(),
+        )
+    )
+    assert denied["intent"] == "error"
+    assert denied["payload"]["error"]["code"] == "E_WEBTERM_POLICY_DENIED"
+
+
 def test_web_console_origin_deny(tmp_path: Path):
     runtime = _runtime(tmp_path, {"WEBTERM_ALLOWED_ORIGINS": "https://allowed.example"})
     denied = runtime.route(
@@ -352,5 +404,19 @@ def test_web_console_inline_private_key_rejected_in_production(tmp_path: Path):
                 "WEBTERM_SSH_AUTH_MODE": "static_client_key",
                 "WEBTERM_SSH_CLIENT_KEY_B64": "cHJpdmF0ZS1rZXk=",
                 "WEBTERM_SSH_CLIENT_KEY_FILE": "",
+            },
+        )
+
+
+def test_web_console_production_requires_explicit_base_urls_when_enabled(tmp_path: Path):
+    with pytest.raises(ValueError):
+        _runtime(
+            tmp_path,
+            {
+                "BRAINDRIVE_ENV": "production",
+                "WEBTERM_REQUIRE_EXPLICIT_BASE_URLS": "true",
+                "WEBTERM_GATEWAY_BASE_URL": "",
+                "WEBTERM_INTENT_ROUTER_BASE_URL": "",
+                "WEBTERM_ROUTER_BASE_URL": "",
             },
         )

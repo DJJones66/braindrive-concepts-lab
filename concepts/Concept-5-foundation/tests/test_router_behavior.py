@@ -180,6 +180,74 @@ def test_provider_pinning_for_model_intents(runtime, make_message):
     assert openrouter["payload"]["provider"] == "openrouter"
 
 
+def test_provider_selector_is_metadata_driven_for_non_model_intents(runtime, make_message):
+    provider_a = CapabilityMetadata(
+        name="provider.routed.echo",
+        description="provider-specific route",
+        input_schema={"type": "object"},
+        risk_class="read",
+        required_extensions=[],
+        approval_required=False,
+        examples=["provider routed echo"],
+        idempotency="idempotent",
+        side_effect_scope="none",
+        capability_version="0.1.0",
+        provider="alpha_provider",
+    )
+    provider_b = CapabilityMetadata(
+        name="provider.routed.echo",
+        description="provider-specific route",
+        input_schema={"type": "object"},
+        risk_class="read",
+        required_extensions=[],
+        approval_required=False,
+        examples=["provider routed echo"],
+        idempotency="idempotent",
+        side_effect_scope="none",
+        capability_version="0.1.0",
+        provider="test_provider",
+    )
+
+    _register_custom(
+        runtime,
+        "node.provider.alpha",
+        300,
+        "0.1.0",
+        provider_a,
+        lambda msg: make_response("provider.routed.done", {"selected_provider": "alpha_provider"}, msg.get("message_id")),
+    )
+    _register_custom(
+        runtime,
+        "node.provider.test",
+        300,
+        "0.1.0",
+        provider_b,
+        lambda msg: make_response("provider.routed.done", {"selected_provider": "test_provider"}, msg.get("message_id")),
+    )
+
+    routed = runtime.route(
+        make_message(
+            "provider.routed.echo",
+            {},
+            {"llm": {"provider": "test_provider"}},
+        )
+    )
+    assert routed["intent"] == "provider.routed.done"
+    assert routed["payload"]["selected_provider"] == "test_provider"
+
+
+def test_unknown_provider_selector_returns_node_unavailable(runtime, make_message):
+    routed = runtime.route(
+        make_message(
+            "model.chat.complete",
+            {"prompt": "hello"},
+            {"llm": {"provider": "nonexistent_provider"}},
+        )
+    )
+    assert routed["intent"] == "error"
+    assert routed["payload"]["error"]["code"] == "E_NODE_UNAVAILABLE"
+
+
 def test_unknown_prompt_defaults_to_model_chat(runtime):
     routed = runtime.route_nl("Tell me what I should focus on this week")
     assert routed["status"] == "routed"

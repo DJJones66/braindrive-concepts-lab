@@ -1,0 +1,32 @@
+{
+  "provider": "ollama",
+  "adapter_factory": "braindrive_runtime.providers.ollama:OllamaAdapter",
+  "adapter_kwargs": {
+    "base_url": {
+      "env": "BRAINDRIVE_OLLAMA_BASE_URL",
+      "default": ""
+    },
+    "api_key": {
+      "env": "BRAINDRIVE_OLLAMA_API_KEY",
+      "default": ""
+    },
+    "timeout_sec": {
+      "env": "BRAINDRIVE_MODEL_TIMEOUT_SEC",
+      "default": "30"
+    }
+  },
+  "model_node": {
+    "node_id": "node.model.ollama",
+    "priority": 165,
+    "label": "Ollama"
+  },
+  "config": {
+    "base_url_env": "BRAINDRIVE_OLLAMA_BASE_URL",
+    "base_url_default": "",
+    "base_url_required": true,
+    "default_model_env": "BRAINDRIVE_OLLAMA_DEFAULT_MODEL",
+    "required_env": [],
+    "required_env_messages": {},
+    "startup_notice": "requires BRAINDRIVE_OLLAMA_BASE_URL, BRAINDRIVE_OLLAMA_API_KEY is optional"
+  }
+}

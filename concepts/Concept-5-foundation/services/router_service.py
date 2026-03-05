@@ -18,9 +18,14 @@ from braindrive_runtime.metadata import NodeDescriptor
 from braindrive_runtime.persistence import Persistence
 from braindrive_runtime.protocol import make_error
 from braindrive_runtime.router import RouterCore
+from braindrive_runtime.security import validate_registration_token
 
 PORT = int(os.getenv("ROUTER_PORT", "8080"))
-REGISTRATION_TOKEN = os.getenv("ROUTER_REGISTRATION_TOKEN", "braindrive-mvp-dev-token")
+try:
+    REGISTRATION_TOKEN = validate_registration_token(os.getenv("ROUTER_REGISTRATION_TOKEN", ""))
+except ValueError as exc:
+    print(f"[error] {exc}", file=sys.stderr)
+    raise SystemExit(2)
 LIBRARY_ROOT = Path(os.getenv("BRAINDRIVE_LIBRARY_ROOT", "/workspace/data/library"))
 RUNTIME_DIR = Path(os.getenv("BRAINDRIVE_RUNTIME_DIR", "/workspace/data/runtime"))
 USER_CONFIG_PATH = Path(os.getenv("BRAINDRIVE_USER_CONFIG_PATH", "/workspace/data/runtime/user-config.yaml"))

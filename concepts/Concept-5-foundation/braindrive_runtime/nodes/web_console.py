@@ -68,8 +68,11 @@ class WebConsoleNode(ProtocolNode):
         self.max_message_bytes = _env_int(env, "WEBTERM_MAX_MESSAGE_BYTES", 4096, minimum=256)
         self.max_events_per_minute = _env_int(env, "WEBTERM_MAX_EVENTS_PER_MINUTE", 120, minimum=10)
 
-        self.default_target = str((env or {}).get("WEBTERM_SSH_TARGET_DEFAULT", "node-router")).strip() or "node-router"
-        self.targets = _env_csv(env, "WEBTERM_TARGETS") or [self.default_target]
+        self.configured_default_target = str((env or {}).get("WEBTERM_SSH_TARGET_DEFAULT", "node-router")).strip() or "node-router"
+        self.configured_targets = _env_csv(env, "WEBTERM_TARGETS")
+        self.target_denylist = {item for item in _env_csv(env, "WEBTERM_TARGETS_DENYLIST")}
+        self.target_discovery_enabled = _env_bool(env, "WEBTERM_TARGET_DISCOVERY_ENABLED", True)
+        self.target_discovery_ttl_sec = _env_float(env, "WEBTERM_TARGET_DISCOVERY_TTL_SEC", 15.0, minimum=0.0)
 
         self.ssh_gateway_host = str((env or {}).get("WEBTERM_SSH_GATEWAY_HOST", "ssh-gateway")).strip()
         self.ssh_gateway_port = _env_int(env, "WEBTERM_SSH_GATEWAY_PORT", 2226, minimum=1)
@@ -81,13 +84,32 @@ class WebConsoleNode(ProtocolNode):
         self.gateway_base_url = str((env or {}).get("WEBTERM_GATEWAY_BASE_URL", "http://gateway:8090")).strip().rstrip("/")
         self.router_base_url = str((env or {}).get("WEBTERM_ROUTER_BASE_URL", "http://node-router:8080")).strip().rstrip("/")
         self.http_timeout_sec = _env_float(env, "WEBTERM_HTTP_TIMEOUT_SEC", 20.0, minimum=1.0)
+        self.target_discovery_timeout_sec = _env_float(
+            env,
+            "WEBTERM_TARGET_DISCOVERY_TIMEOUT_SEC",
+            min(2.0, self.http_timeout_sec),
+            minimum=0.2,
+        )
         self.allow_intent_fallback = _env_bool(env, "WEBTERM_ALLOW_INTENT_FALLBACK", False)
+        self.require_explicit_base_urls = _env_bool(
+            env,
+            "WEBTERM_REQUIRE_EXPLICIT_BASE_URLS",
+            default=self.environment_name not in {"dev", "development", "local", "test"},
+        )
 
         loaded = self.ctx.persistence.load_state("webterm_state", {"sessions": {}})
         self.state: Dict[str, Any] = loaded if isinstance(loaded, dict) else {"sessions": {}}
         if not isinstance(self.state.get("sessions"), dict):
             self.state["sessions"] = {}
 
+        self.targets: List[str] = []
+        self.default_target = self.configured_default_target
+        self._active_targets: List[str] = []
+        self._target_cache_loaded_at = 0.0
+        self._config_warning_keys: set[str] = set()
+
+        self._validate_base_url_policy()
+        self._validate_base_url_shapes()
         self._validate_ssh_key_policy()
 
     def capabilities(self) -> List:
@@ -161,6 +183,224 @@ class WebConsoleNode(ProtocolNode):
         is_dev = self.environment_name in {"dev", "development", "local", "test"}
         if not is_dev and client_key_inline and not client_key_file:
             raise ValueError("WEBTERM_SSH_CLIENT_KEY_B64 is only allowed in development when key file is absent")
+
+    def _log_config_warning(self, key: str, message: str) -> None:
+        if key in self._config_warning_keys:
+            return
+        self._config_warning_keys.add(key)
+        self.ctx.persistence.append_log(
+            "webterm_config",
+            {
+                "timestamp": now_iso(),
+                "level": "warn",
+                "warning_key": key,
+                "message": message,
+            },
+        )
+
+    def _validate_base_url_policy(self) -> None:
+        if not self.require_explicit_base_urls:
+            return
+        env = self.ctx.env or {}
+        required = [
+            "WEBTERM_GATEWAY_BASE_URL",
+            "WEBTERM_INTENT_ROUTER_BASE_URL",
+            "WEBTERM_ROUTER_BASE_URL",
+        ]
+        missing = [key for key in required if not str(env.get(key, "")).strip()]
+        if missing:
+            raise ValueError(
+                "Explicit base URLs required in this environment; missing: " + ", ".join(missing)
+            )
+
+    def _validate_base_url_shapes(self) -> None:
+        for key, value in (
+            ("WEBTERM_GATEWAY_BASE_URL", self.gateway_base_url),
+            ("WEBTERM_INTENT_ROUTER_BASE_URL", self.intent_router_base_url),
+            ("WEBTERM_ROUTER_BASE_URL", self.router_base_url),
+        ):
+            if not value:
+                self._log_config_warning(key, f"{key} is empty; related web console calls may fail.")
+                continue
+            if not (value.startswith("http://") or value.startswith("https://")):
+                self._log_config_warning(
+                    key,
+                    f"{key}={value!r} does not start with http:// or https://; verify topology config.",
+                )
+
+    @staticmethod
+    def _dedupe_targets(values: List[str]) -> List[str]:
+        out: List[str] = []
+        seen: set[str] = set()
+        for value in values:
+            item = str(value).strip()
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            out.append(item)
+        return out
+
+    @staticmethod
+    def _target_alias_from_node_id(node_id: str) -> str:
+        normalized = str(node_id).strip()
+        if "." in normalized:
+            return normalized.replace(".", "-")
+        return normalized
+
+    def _registry_snapshot(self) -> Dict[str, Any]:
+        if callable(self.ctx.router_registry):
+            try:
+                payload = self.ctx.router_registry()
+                if isinstance(payload, dict):
+                    return payload
+            except Exception as exc:
+                self._log_config_warning(
+                    "router_registry_callback_failed",
+                    f"router_registry callback failed: {type(exc).__name__}: {exc}",
+                )
+
+        if not self.router_base_url:
+            return {"nodes": []}
+
+        try:
+            payload = http_get_json(
+                f"{self.router_base_url}/router/registry",
+                timeout_sec=self.target_discovery_timeout_sec,
+            )
+        except Exception as exc:
+            self._log_config_warning(
+                "router_registry_http_failed",
+                f"router registry discovery failed at {self.router_base_url}/router/registry: {exc}",
+            )
+            return {"nodes": []}
+        return payload if isinstance(payload, dict) else {"nodes": []}
+
+    def _discover_active_targets(self) -> List[str]:
+        payload = self._registry_snapshot()
+        nodes = payload.get("nodes", [])
+        if not isinstance(nodes, list):
+            return []
+
+        out: List[str] = []
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            node_id = str(node.get("node_id", "")).strip()
+            if not node_id or node_id == self.node_id:
+                continue
+
+            status = str(node.get("status", "active")).strip().lower()
+            if status and status != "active":
+                continue
+
+            capabilities = node.get("capabilities", [])
+            if not isinstance(capabilities, list):
+                continue
+
+            has_public_capability = False
+            for capability in capabilities:
+                if not isinstance(capability, dict):
+                    continue
+                name = str(capability.get("name", "")).strip()
+                if not name:
+                    continue
+                visibility = str(capability.get("visibility", "")).strip().lower()
+                if visibility == "internal":
+                    continue
+                has_public_capability = True
+                break
+
+            if not has_public_capability:
+                continue
+
+            out.append(self._target_alias_from_node_id(node_id))
+
+        return self._dedupe_targets(out)
+
+    def _resolve_targets(self, *, force_refresh: bool = False) -> List[str]:
+        now_epoch = time.time()
+        ttl = max(0.0, self.target_discovery_ttl_sec)
+        if (
+            not force_refresh
+            and self._target_cache_loaded_at > 0.0
+            and ttl > 0.0
+            and (now_epoch - self._target_cache_loaded_at) <= ttl
+        ):
+            return deepcopy(self.targets)
+
+        active_targets = self._discover_active_targets() if self.target_discovery_enabled else []
+        configured_targets = self._dedupe_targets(self.configured_targets)
+
+        if configured_targets and active_targets:
+            inactive = [target for target in configured_targets if target not in active_targets]
+            if inactive:
+                self._log_config_warning(
+                    "configured_targets_inactive",
+                    "Configured WEBTERM_TARGETS not currently discovered as active targets: "
+                    + ", ".join(inactive),
+                )
+
+        if configured_targets:
+            policy_targets = configured_targets
+        else:
+            policy_targets = active_targets
+
+        if self.target_denylist:
+            denied = [target for target in policy_targets if target in self.target_denylist]
+            if denied:
+                self._log_config_warning(
+                    "targets_denylisted",
+                    "WEBTERM_TARGETS_DENYLIST removed configured/discovered targets: "
+                    + ", ".join(denied),
+                )
+            policy_targets = [target for target in policy_targets if target not in self.target_denylist]
+            active_targets = [target for target in active_targets if target not in self.target_denylist]
+
+        if not policy_targets and self.configured_default_target and self.configured_default_target not in self.target_denylist:
+            policy_targets = [self.configured_default_target]
+            self._log_config_warning(
+                "targets_fallback_default",
+                "No active/configured targets available; falling back to WEBTERM_SSH_TARGET_DEFAULT.",
+            )
+
+        policy_targets = self._dedupe_targets(policy_targets)
+        active_targets = [target for target in active_targets if target in set(policy_targets)] if policy_targets else []
+
+        if self.configured_default_target and self.configured_default_target in active_targets:
+            resolved_default = self.configured_default_target
+        elif active_targets:
+            resolved_default = active_targets[0]
+        elif self.configured_default_target and self.configured_default_target in policy_targets:
+            resolved_default = self.configured_default_target
+        elif policy_targets:
+            resolved_default = policy_targets[0]
+        else:
+            resolved_default = ""
+
+        self.targets = policy_targets
+        self._active_targets = active_targets
+        self.default_target = resolved_default
+        self._target_cache_loaded_at = now_epoch
+        return deepcopy(self.targets)
+
+    def _select_target(self, requested_target: str) -> tuple[str, str]:
+        targets = self._resolve_targets()
+        requested = str(requested_target).strip()
+
+        if requested:
+            if requested in targets:
+                return requested, ""
+            return "", f"Target denied: {requested}"
+
+        if self.default_target and self.default_target in self._active_targets:
+            return self.default_target, ""
+        if self._active_targets:
+            return self._active_targets[0], ""
+        if self.default_target and self.default_target in targets:
+            return self.default_target, ""
+        if targets:
+            return targets[0], ""
+        return "", "No web console targets are currently available."
 
     def _save(self) -> None:
         self.ctx.persistence.save_state("webterm_state", self.state)
@@ -702,7 +942,11 @@ class WebConsoleNode(ProtocolNode):
             )
 
         if lowered == "/targets":
-            lines = "\n".join(f"- {target}" for target in self.targets)
+            targets = self._resolve_targets(force_refresh=True)
+            lines = "\n".join(f"- {target}" for target in targets)
+            resolved_default = self.default_target
+            if resolved_default:
+                lines = f"{lines}\n(default: {resolved_default})" if lines else f"(default: {resolved_default})"
             return self._session_events_response(
                 session=session,
                 events=[{"event": "terminal.output", "payload": {"data": f"Targets:\n{lines}\n"}}],
@@ -711,7 +955,8 @@ class WebConsoleNode(ProtocolNode):
 
         if lowered.startswith("/use "):
             selected = command.split(" ", 1)[1].strip()
-            if selected not in self.targets:
+            targets = self._resolve_targets()
+            if selected not in targets:
                 return self._session_events_response(
                     session=session,
                     events=[{"event": "terminal.output", "payload": {"data": f"Target not allowed: {selected}\n"}}],
@@ -874,9 +1119,9 @@ class WebConsoleNode(ProtocolNode):
         if self._open_sessions_for(actor_id) >= self.max_sessions_per_user:
             return make_error("E_WEBTERM_POLICY_DENIED", "Session limit reached for actor", message.get("message_id"))
 
-        target = str(payload.get("target", self.default_target)).strip() or self.default_target
-        if target not in self.targets:
-            return make_error("E_WEBTERM_POLICY_DENIED", f"Target denied: {target}", message.get("message_id"))
+        target, target_error = self._select_target(str(payload.get("target", "")))
+        if target_error:
+            return make_error("E_WEBTERM_POLICY_DENIED", target_error, message.get("message_id"))
 
         now_epoch = time.time()
         session_id = f"sess_{new_uuid()}"
@@ -1014,10 +1259,11 @@ class WebConsoleNode(ProtocolNode):
             actor_id, _ = self._actor_from_identity(message)
             if not actor_id:
                 return make_error("E_WEBTERM_AUTH_REQUIRED", "Identity extension is required", message.get("message_id"))
+            targets = self._resolve_targets(force_refresh=True)
             return make_response(
                 "web.console.targets",
                 {
-                    "targets": deepcopy(self.targets),
+                    "targets": deepcopy(targets),
                     "default_target": self.default_target,
                 },
                 message.get("message_id"),

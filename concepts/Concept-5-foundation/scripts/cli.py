@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import atexit
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 import re
@@ -126,20 +127,50 @@ def _colorize(text: str, color: str, use_color: bool) -> str:
     return f"{color}{text}{ANSI_RESET}"
 
 
-def _request(method: str, url: str, timeout_sec: float, payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
+class HttpRequestError(RuntimeError):
+    def __init__(self, status_code: int, url: str, raw_body: str) -> None:
+        self.status_code = int(status_code)
+        self.url = url
+        self.raw_body = raw_body
+        super().__init__(f"HTTP {status_code} {url}: {raw_body}")
+
+    def as_json(self) -> Dict[str, Any]:
+        try:
+            parsed = json.loads(self.raw_body)
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+
+def _request(
+    method: str,
+    url: str,
+    timeout_sec: float,
+    payload: Dict[str, Any] | None = None,
+    headers: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
     body = None
-    headers = {"Accept": "application/json"}
+    request_headers = {"Accept": "application/json"}
     if payload is not None:
         body = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
+        request_headers["Content-Type"] = "application/json"
 
-    req = request.Request(url=url, data=body, headers=headers, method=method)
+    if isinstance(headers, dict):
+        for key, value in headers.items():
+            if value is None:
+                continue
+            normalized_key = str(key).strip()
+            if not normalized_key:
+                continue
+            request_headers[normalized_key] = str(value)
+
+    req = request.Request(url=url, data=body, headers=request_headers, method=method)
     try:
         with request.urlopen(req, timeout=timeout_sec) as resp:
             raw = resp.read().decode("utf-8")
     except error.HTTPError as exc:
         raw = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP {exc.code} {url}: {raw}") from exc
+        raise HttpRequestError(status_code=exc.code, url=url, raw_body=raw) from exc
     except error.URLError as exc:
         raise RuntimeError(f"request failed for {url}: {exc}") from exc
 
@@ -313,6 +344,25 @@ class CliClient:
         self.actor_roles = [item.strip() for item in _env("BRAINDRIVE_CLI_ACTOR_ROLES", default="operator").split(",") if item.strip()]
         if not self.actor_roles:
             self.actor_roles = ["operator"]
+        seed = self._derive_auth_seed()
+        default_cli_username = f"cli.{self._stable_hash(seed)[:16]}"
+        default_cli_password = self._stable_hash(f"{seed}:gateway-auth")
+        self.gateway_auth_username = (
+            _env("BRAINDRIVE_CLI_AUTH_USERNAME", default=default_cli_username).strip() or default_cli_username
+        )
+        self.gateway_auth_password = (
+            _env("BRAINDRIVE_CLI_AUTH_PASSWORD", default=default_cli_password).strip() or default_cli_password
+        )
+        self.gateway_auth_roles = self._split_csv(
+            _env("BRAINDRIVE_CLI_AUTH_ROLES", "BRAINDRIVE_CLI_ACTOR_ROLES", default="operator")
+        )
+        if not self.gateway_auth_roles:
+            self.gateway_auth_roles = ["operator"]
+        self.gateway_auth_scopes = self._split_csv(_env("BRAINDRIVE_CLI_AUTH_SCOPES", default=""))
+        self.gateway_auth_auto_register = _env_bool("BRAINDRIVE_CLI_AUTH_AUTO_REGISTER", default=True)
+        self.gateway_session_token = ""
+        self.gateway_refresh_token = ""
+        self.gateway_auth_session_id = ""
         self.library_root = Path(_env("BRAINDRIVE_LIBRARY_ROOT", default=DEFAULT_LIBRARY_ROOT)).expanduser()
         self.conversation_id = ""
         self.active_folder = ""
@@ -321,6 +371,120 @@ class CliClient:
         self._prompt_lines: List[str] = []
         self._prompt_cursor = 0
         self._prompt_title = ""
+
+    @staticmethod
+    def _split_csv(value: str) -> List[str]:
+        return [item.strip() for item in str(value).split(",") if item.strip()]
+
+    @staticmethod
+    def _stable_hash(value: str) -> str:
+        return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _derive_auth_seed() -> str:
+        for value in (
+            _env("BRAINDRIVE_CLI_AUTH_SEED", default="").strip(),
+            _env("ROUTER_REGISTRATION_TOKEN", default="").strip(),
+            _env("TTY_WEBTERM_AUTH_PASSWORD", default="").strip(),
+            _env("DEV_WEBTERM_AUTH_PASSWORD", default="").strip(),
+        ):
+            if value:
+                return value
+        return f"{PROJECT_ROOT.as_posix()}:{_env('HOST_UID', default='')}:{_env('HOST_GID', default='')}"
+
+    @staticmethod
+    def _auth_error_code(payload: Dict[str, Any]) -> str:
+        err = payload.get("error", {})
+        if not isinstance(err, dict):
+            return ""
+        return str(err.get("code", "")).strip()
+
+    @classmethod
+    def _is_auth_required_exception(cls, exc: Exception) -> bool:
+        if isinstance(exc, HttpRequestError):
+            if exc.status_code in {401, 403}:
+                return True
+            return cls._auth_error_code(exc.as_json()) in {"E_AUTH_REQUIRED", "E_AUTH_FORBIDDEN"}
+        text = str(exc)
+        return "E_AUTH_REQUIRED" in text or "E_AUTH_FORBIDDEN" in text or "valid session is required" in text
+
+    @classmethod
+    def _is_auth_required_result(cls, result: Dict[str, Any]) -> bool:
+        return cls._auth_error_code(result) in {"E_AUTH_REQUIRED", "E_AUTH_FORBIDDEN"}
+
+    def _apply_gateway_session(self, response: Dict[str, Any]) -> None:
+        token = str(response.get("token", "")).strip()
+        if not token:
+            raise RuntimeError("gateway auth response missing token")
+        self.gateway_session_token = token
+        self.gateway_refresh_token = str(response.get("refresh_token", "")).strip()
+        session = response.get("session", {})
+        if isinstance(session, dict):
+            self.gateway_auth_session_id = str(session.get("auth_session_id", "")).strip()
+
+    def _clear_gateway_session(self) -> None:
+        self.gateway_session_token = ""
+        self.gateway_refresh_token = ""
+        self.gateway_auth_session_id = ""
+
+    def _gateway_auth_headers(self) -> Dict[str, str]:
+        token = self.gateway_session_token.strip()
+        if not token:
+            return {}
+        return {"Authorization": f"Bearer {token}"}
+
+    def _login_gateway(self) -> Dict[str, Any]:
+        return _request(
+            "POST",
+            f"{self.gateway_base}/api/v1/auth/login",
+            timeout_sec=self.timeout_sec,
+            payload={
+                "username": self.gateway_auth_username,
+                "password": self.gateway_auth_password,
+            },
+        )
+
+    def _register_gateway_user(self) -> None:
+        _request(
+            "POST",
+            f"{self.gateway_base}/api/v1/auth/register",
+            timeout_sec=self.timeout_sec,
+            payload={
+                "username": self.gateway_auth_username,
+                "password": self.gateway_auth_password,
+                "roles": self.gateway_auth_roles,
+                "scopes": self.gateway_auth_scopes,
+            },
+        )
+
+    def ensure_gateway_session(self, *, force_reauth: bool = False) -> None:
+        if force_reauth:
+            self._clear_gateway_session()
+        if self.gateway_session_token:
+            return
+
+        try:
+            login = self._login_gateway()
+            self._apply_gateway_session(login)
+            return
+        except HttpRequestError as exc:
+            if not self.gateway_auth_auto_register:
+                raise
+            if exc.status_code not in {400, 401, 404} and self._auth_error_code(exc.as_json()) != "E_AUTH_REQUIRED":
+                raise
+
+        if not self.gateway_auth_auto_register:
+            raise RuntimeError("gateway auth failed and BRAINDRIVE_CLI_AUTH_AUTO_REGISTER=false")
+
+        try:
+            self._register_gateway_user()
+        except HttpRequestError as exc:
+            code = self._auth_error_code(exc.as_json())
+            if exc.status_code != 409 or code != "E_USER_EXISTS":
+                raise
+
+        login = self._login_gateway()
+        self._apply_gateway_session(login)
 
     @staticmethod
     def _now_iso() -> str:
@@ -567,25 +731,40 @@ class CliClient:
                 "channel": "cli",
             },
         }
-        try:
-            gateway_result = _request(
-                "POST",
-                f"{self.gateway_base}/api/v1/messages",
-                timeout_sec=self.timeout_sec,
-                payload=gateway_payload,
-            )
-            if gateway_result.get("ok") is not True:
-                err = gateway_result.get("error", {}) if isinstance(gateway_result.get("error"), dict) else {}
-                message = str(err.get("message", "gateway route failed")).strip() or "gateway route failed"
-                raise RuntimeError(message)
-            returned_conversation_id = str(gateway_result.get("conversation_id", "")).strip()
-            if returned_conversation_id:
-                self.conversation_id = returned_conversation_id
-            return gateway_result
-        except Exception:
-            if not self.allow_intent_fallback:
-                raise
-            return _request("POST", f"{self.intent_base}/intent/route", timeout_sec=self.timeout_sec, payload=payload)
+        gateway_error: Optional[Exception] = None
+        for attempt in range(2):
+            try:
+                self.ensure_gateway_session(force_reauth=(attempt > 0))
+                gateway_result = _request(
+                    "POST",
+                    f"{self.gateway_base}/api/v1/messages",
+                    timeout_sec=self.timeout_sec,
+                    payload=gateway_payload,
+                    headers=self._gateway_auth_headers(),
+                )
+                if gateway_result.get("ok") is not True:
+                    if attempt == 0 and self._is_auth_required_result(gateway_result):
+                        self._clear_gateway_session()
+                        continue
+                    err = gateway_result.get("error", {}) if isinstance(gateway_result.get("error"), dict) else {}
+                    message = str(err.get("message", "gateway route failed")).strip() or "gateway route failed"
+                    raise RuntimeError(message)
+                returned_conversation_id = str(gateway_result.get("conversation_id", "")).strip()
+                if returned_conversation_id:
+                    self.conversation_id = returned_conversation_id
+                return gateway_result
+            except Exception as exc:
+                gateway_error = exc
+                if attempt == 0 and self._is_auth_required_exception(exc):
+                    self._clear_gateway_session()
+                    continue
+                break
+
+        if not self.allow_intent_fallback:
+            if gateway_error is not None:
+                raise gateway_error
+            raise RuntimeError("gateway route failed")
+        return _request("POST", f"{self.intent_base}/intent/route", timeout_sec=self.timeout_sec, payload=payload)
 
     def analyze_text(self, text: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         payload: Dict[str, Any] = {"message": text}
@@ -1014,7 +1193,13 @@ class CliClient:
         selection = resolver.select_llm(llm)
         requirement = resolver.validate_provider_requirements(selection)
         if requirement:
-            raise RuntimeError(requirement)
+            message = str(requirement).strip()
+            if "BRAINDRIVE_OPENROUTER_API_KEY" in message:
+                message = (
+                    f"{message} (missing in current CLI runtime environment; "
+                    "restart/rebuild CLI container after updating .env)"
+                )
+            raise RuntimeError(message)
 
         defaults = resolver.provider_defaults(selection.provider)
         base_url = defaults.base_url.strip().rstrip("/")
@@ -1655,6 +1840,7 @@ def _replay_startup_view(client: CliClient, *, include_bootstrap: bool) -> bool:
         _wait_for_health(client.gateway_base, client.timeout_sec, "gateway.api")
         _wait_for_health(client.router_base, client.timeout_sec, "router.core")
         _wait_for_health(client.intent_base, client.timeout_sec, "intent.router.natural-language")
+        client.ensure_gateway_session()
     except Exception as exc:
         print(_colorize(f"[error] {exc}", ANSI_SYSTEM, client.use_color))
         print(_colorize("Start services with: docker compose up -d", ANSI_SYSTEM, client.use_color))
@@ -1786,6 +1972,7 @@ def main() -> None:
         _wait_for_health(client.gateway_base, client.timeout_sec, "gateway.api")
         _wait_for_health(client.router_base, client.timeout_sec, "router.core")
         _wait_for_health(client.intent_base, client.timeout_sec, "intent.router.natural-language")
+        client.ensure_gateway_session()
     except Exception as exc:
         print(_colorize(f"[error] {exc}", ANSI_SYSTEM, client.use_color))
         print(_colorize("Start services with: docker compose up -d", ANSI_SYSTEM, client.use_color))

@@ -8,62 +8,12 @@ from typing import Any, Dict, List, Tuple
 
 from ..config import ConfigResolver
 from ..protocol import make_error, make_response, new_uuid, now_iso
+from ..workflow_conventions import load_workflow_conventions
 from .base import ProtocolNode, cap
 from .llm_driver import LLMSkillDriver
 
 MIN_INTERVIEW_ANSWERS = 5
 MAX_INTERVIEW_HISTORY_CHARS = 24000
-
-LEGACY_INTENT_MAP: Dict[str, Dict[str, str]] = {
-    "workflow.interview.start": {"skill_id": "interview", "action": "start", "execution_tier": "stateful"},
-    "workflow.interview.continue": {"skill_id": "interview", "action": "continue", "execution_tier": "stateful"},
-    "workflow.interview.complete": {"skill_id": "interview", "action": "complete", "execution_tier": "stateful"},
-    "workflow.spec.generate": {"skill_id": "spec-generation", "action": "generate", "execution_tier": "read"},
-    "workflow.spec.propose_save": {"skill_id": "spec-generation", "action": "propose_save", "execution_tier": "stateful"},
-    "workflow.plan.generate": {"skill_id": "plan-generation", "action": "generate", "execution_tier": "read"},
-    "workflow.plan.propose_save": {"skill_id": "plan-generation", "action": "propose_save", "execution_tier": "stateful"},
-}
-
-LEGACY_ACTION_BEHAVIOR: Dict[Tuple[str, str], Dict[str, str]] = {
-    ("interview", "start"): {
-        "operation": "session.start",
-        "question_intent": "workflow.interview.question",
-    },
-    ("interview", "continue"): {
-        "operation": "session.step",
-        "question_intent": "workflow.interview.question",
-        "ready_intent": "workflow.interview.ready",
-        "next_intent": "workflow.interview.complete",
-    },
-    ("interview", "complete"): {
-        "operation": "session.complete",
-        "completed_intent": "workflow.interview.completed",
-    },
-    ("spec-generation", "generate"): {
-        "operation": "artifact.generate",
-        "artifact_kind": "spec",
-        "generated_intent": "workflow.spec.generated",
-    },
-    ("spec-generation", "propose_save"): {
-        "operation": "artifact.propose_save",
-        "artifact_kind": "spec",
-        "generated_intent": "workflow.spec.generated",
-        "save_path": "spec.md",
-        "save_summary": "Save generated spec",
-    },
-    ("plan-generation", "generate"): {
-        "operation": "artifact.generate",
-        "artifact_kind": "plan",
-        "generated_intent": "workflow.plan.generated",
-    },
-    ("plan-generation", "propose_save"): {
-        "operation": "artifact.propose_save",
-        "artifact_kind": "plan",
-        "generated_intent": "workflow.plan.generated",
-        "save_path": "plan.md",
-        "save_summary": "Save generated plan",
-    },
-}
 
 
 class SkillWorkflowNode(ProtocolNode):
@@ -76,6 +26,11 @@ class SkillWorkflowNode(ProtocolNode):
         user_config_path_raw = str(source_env.get("BRAINDRIVE_USER_CONFIG_PATH", "")).strip()
         user_config_path = Path(user_config_path_raw) if user_config_path_raw else None
         self._config = ConfigResolver(env=source_env, user_config_path=user_config_path)
+        self._workflow = load_workflow_conventions(self.ctx.library_root, self.ctx.persistence)
+        self._legacy_intent_map = {key: dict(value) for key, value in self._workflow.legacy_intent_map.items()}
+        self._legacy_action_behavior = {
+            key: dict(value) for key, value in self._workflow.legacy_action_behavior.items()
+        }
         self._catalog_cache: Dict[str, Dict[str, Any]] = {}
         self._catalog_fingerprint: Tuple[Tuple[str, int, int], ...] = tuple()
 
@@ -183,7 +138,7 @@ class SkillWorkflowNode(ProtocolNode):
             ),
             cap(
                 name="workflow.spec.propose_save",
-                description="Create approval payload for saving spec.md",
+                description=f"Create approval payload for saving {self._workflow.spec_path}",
                 input_schema={"type": "object"},
                 risk_class="mutate",
                 required_extensions=[],
@@ -205,7 +160,7 @@ class SkillWorkflowNode(ProtocolNode):
             ),
             cap(
                 name="workflow.plan.propose_save",
-                description="Create approval payload for saving plan.md",
+                description=f"Create approval payload for saving {self._workflow.plan_path}",
                 input_schema={"type": "object"},
                 risk_class="mutate",
                 required_extensions=[],
@@ -305,17 +260,17 @@ class SkillWorkflowNode(ProtocolNode):
                 "start": {
                     "execution_tier": "stateful",
                     "prompt_file": filename,
-                    **LEGACY_ACTION_BEHAVIOR.get(("interview", "start"), {}),
+                    **self._legacy_action_behavior.get(("interview", "start"), {}),
                 },
                 "continue": {
                     "execution_tier": "stateful",
                     "prompt_file": filename,
-                    **LEGACY_ACTION_BEHAVIOR.get(("interview", "continue"), {}),
+                    **self._legacy_action_behavior.get(("interview", "continue"), {}),
                 },
                 "complete": {
                     "execution_tier": "stateful",
                     "prompt_file": filename,
-                    **LEGACY_ACTION_BEHAVIOR.get(("interview", "complete"), {}),
+                    **self._legacy_action_behavior.get(("interview", "complete"), {}),
                 },
             }
         if filename == "spec-generation.md":
@@ -323,12 +278,12 @@ class SkillWorkflowNode(ProtocolNode):
                 "generate": {
                     "execution_tier": "read",
                     "prompt_file": filename,
-                    **LEGACY_ACTION_BEHAVIOR.get(("spec-generation", "generate"), {}),
+                    **self._legacy_action_behavior.get(("spec-generation", "generate"), {}),
                 },
                 "propose_save": {
                     "execution_tier": "stateful",
                     "prompt_file": filename,
-                    **LEGACY_ACTION_BEHAVIOR.get(("spec-generation", "propose_save"), {}),
+                    **self._legacy_action_behavior.get(("spec-generation", "propose_save"), {}),
                 },
             }
         if filename == "plan-generation.md":
@@ -336,12 +291,12 @@ class SkillWorkflowNode(ProtocolNode):
                 "generate": {
                     "execution_tier": "read",
                     "prompt_file": filename,
-                    **LEGACY_ACTION_BEHAVIOR.get(("plan-generation", "generate"), {}),
+                    **self._legacy_action_behavior.get(("plan-generation", "generate"), {}),
                 },
                 "propose_save": {
                     "execution_tier": "stateful",
                     "prompt_file": filename,
-                    **LEGACY_ACTION_BEHAVIOR.get(("plan-generation", "propose_save"), {}),
+                    **self._legacy_action_behavior.get(("plan-generation", "propose_save"), {}),
                 },
             }
         return {
@@ -421,11 +376,10 @@ class SkillWorkflowNode(ProtocolNode):
             "skills_dir": str(self._skills_dir()),
         }
 
-    @staticmethod
-    def _action_behavior(skill_id: str, action: str, action_meta: Dict[str, Any], source: str) -> Dict[str, str]:
+    def _action_behavior(self, skill_id: str, action: str, action_meta: Dict[str, Any], source: str) -> Dict[str, str]:
         behavior: Dict[str, str] = {}
         if source == "legacy_markdown":
-            behavior.update(LEGACY_ACTION_BEHAVIOR.get((skill_id, action), {}))
+            behavior.update(self._legacy_action_behavior.get((skill_id, action), {}))
         for key in [
             "operation",
             "artifact_kind",
@@ -440,6 +394,11 @@ class SkillWorkflowNode(ProtocolNode):
             raw = action_meta.get(key)
             if isinstance(raw, str) and raw.strip():
                 behavior[key] = raw.strip()
+
+        if skill_id == "spec-generation" and action == "propose_save":
+            behavior["save_path"] = self._workflow.spec_path
+        if skill_id == "plan-generation" and action == "propose_save":
+            behavior["save_path"] = self._workflow.plan_path
         return behavior
 
     def _resolve_action(self, skill_id: str, action: str, parent_message_id: str | None) -> Tuple[Dict[str, Any] | None, Dict[str, Any] | None]:
@@ -655,7 +614,7 @@ class SkillWorkflowNode(ProtocolNode):
             return
 
     def _append_interview_session_history(self, folder: str, interview: Dict[str, Any], summary: str) -> None:
-        path = f"{folder}/interview.md"
+        path = f"{folder}/{self._workflow.interview_path}"
         existing = self._memory_read(path)
 
         answers = interview.get("answers", [])
@@ -718,8 +677,8 @@ class SkillWorkflowNode(ProtocolNode):
             return
 
     def _agent_context(self, folder: str) -> str:
-        text = self._memory_read(f"{folder}/AGENT.md")
-        return text if text else "No AGENT.md context available."
+        text = self._memory_read(f"{folder}/{self._workflow.agent_path}")
+        return text if text else f"No {self._workflow.agent_path} context available."
 
     @staticmethod
     def _first_question_line(text: str) -> str:
@@ -763,7 +722,7 @@ class SkillWorkflowNode(ProtocolNode):
             "Focus on software behavior, user flow, inputs/outputs, constraints, risks, and success criteria.\n"
             "Do not repeat earlier questions. Avoid meta commentary.\n"
             "Return only the question text.\n\n"
-            f"Workspace context (AGENT.md):\n{agent_text}\n\n"
+            f"Workspace context ({self._workflow.agent_path}):\n{agent_text}\n\n"
             f"Prior Q/A:\n{transcript}\n"
         )
 
@@ -791,7 +750,7 @@ class SkillWorkflowNode(ProtocolNode):
         return str(value).strip() if value is not None else ""
 
     def _interview_history_markdown(self, folder: str) -> str:
-        text = self._memory_read(f"{folder}/interview.md")
+        text = self._memory_read(f"{folder}/{self._workflow.interview_path}")
         if not text:
             return ""
         if len(text) <= MAX_INTERVIEW_HISTORY_CHARS:
@@ -807,7 +766,7 @@ class SkillWorkflowNode(ProtocolNode):
             return
 
     def _spec_text(self, folder: str) -> str:
-        spec_text = self._memory_read(f"{folder}/spec.md")
+        spec_text = self._memory_read(f"{folder}/{self._workflow.spec_path}")
         if spec_text:
             return spec_text
 
@@ -832,7 +791,7 @@ class SkillWorkflowNode(ProtocolNode):
             summary = "No interview summary available."
         history_markdown = self._interview_history_markdown(folder)
         if not history_markdown:
-            history_markdown = "No interview.md history available."
+            history_markdown = f"No {self._workflow.interview_path} history available."
 
         return (
             f"{skill}\n\n"
@@ -842,14 +801,14 @@ class SkillWorkflowNode(ProtocolNode):
             "# <Folder> Spec\n"
             "## Goal\n## Success Criteria\n## Current State\n## Risks\n## First Milestone\n## Scope\n## Non-Goals\n## Open Questions\n"
             "Rewrite rough notes into clear professional language while preserving intent.\n\n"
-            f"Folder context (AGENT.md):\n{agent_text}\n\n"
-            f"Interview history (interview.md):\n{history_markdown}\n\n"
+            f"Folder context ({self._workflow.agent_path}):\n{agent_text}\n\n"
+            f"Interview history ({self._workflow.interview_path}):\n{history_markdown}\n\n"
             f"Interview summary:\n{summary}\n\n"
             f"Interview Q/A evidence:\n{answers_block}\n"
         )
 
     def _build_plan_prompt(self, *, folder: str, skill: str, spec_text: str) -> str:
-        source_spec = spec_text.strip() or "No spec.md exists yet."
+        source_spec = spec_text.strip() or f"No {self._workflow.spec_path} exists yet."
         return (
             f"{skill}\n\n"
             f"Generate a practical markdown build plan for folder '{folder}'.\n"
@@ -1053,7 +1012,7 @@ class SkillWorkflowNode(ProtocolNode):
             folder=folder,
             output={
                 "summary": summary or "",
-                "history_path": f"{folder}/interview.md",
+                "history_path": f"{folder}/{self._workflow.interview_path}",
                 "answers_collected": len([item for item in answers if isinstance(item, dict)]),
                 "session_id": str(interview.get("session_id", "")),
                 "completed_at": str(interview.get("completed_at", "")),
@@ -1067,7 +1026,7 @@ class SkillWorkflowNode(ProtocolNode):
                 "folder": folder,
                 "answers_collected": len([item for item in answers if isinstance(item, dict)]),
                 "summary": summary or "",
-                "history_path": f"{folder}/interview.md",
+                "history_path": f"{folder}/{self._workflow.interview_path}",
                 "session_id": str(interview.get("session_id", "")),
                 "completed_at": str(interview.get("completed_at", "")),
             },
@@ -1122,7 +1081,7 @@ class SkillWorkflowNode(ProtocolNode):
         behavior: Dict[str, str],
     ) -> Tuple[str, Dict[str, Any]] | Dict[str, Any]:
         generated_intent = behavior.get("generated_intent", "workflow.spec.generated")
-        save_path = str(behavior.get("save_path", "spec.md")).strip() or "spec.md"
+        save_path = str(behavior.get("save_path", self._workflow.spec_path)).strip() or self._workflow.spec_path
         save_summary = str(behavior.get("save_summary", "Save generated spec")).strip() or "Save generated spec"
         spec_markdown = str(payload.get("spec_markdown", "")).strip()
         if not spec_markdown:
@@ -1209,7 +1168,7 @@ class SkillWorkflowNode(ProtocolNode):
         behavior: Dict[str, str],
     ) -> Tuple[str, Dict[str, Any]] | Dict[str, Any]:
         generated_intent = behavior.get("generated_intent", "workflow.plan.generated")
-        save_path = str(behavior.get("save_path", "plan.md")).strip() or "plan.md"
+        save_path = str(behavior.get("save_path", self._workflow.plan_path)).strip() or self._workflow.plan_path
         save_summary = str(behavior.get("save_summary", "Save generated plan")).strip() or "Save generated plan"
         plan_markdown = str(payload.get("plan_markdown", "")).strip()
         if not plan_markdown:
@@ -1543,11 +1502,13 @@ class SkillWorkflowNode(ProtocolNode):
                 message.get("message_id"),
             )
 
-        if intent in LEGACY_INTENT_MAP:
-            mapping = LEGACY_INTENT_MAP[intent]
-            skill_id = mapping["skill_id"]
-            action = mapping["action"]
-            tier = mapping["execution_tier"]
+        if intent in self._legacy_intent_map:
+            mapping = self._legacy_intent_map[intent]
+            skill_id = str(mapping.get("skill_id", "")).strip()
+            action = str(mapping.get("action", "")).strip()
+            tier = str(mapping.get("execution_tier", "read")).strip() or "read"
+            if not skill_id or not action:
+                return make_error("E_NO_ROUTE", "Legacy workflow mapping is invalid", message.get("message_id"))
             folder = self._active_folder()
             llm_ext = self._llm_ext(message)
 

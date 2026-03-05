@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from braindrive_runtime.protocol import new_uuid
+from braindrive_runtime.runtime import BrainDriveRuntime
 
 REPORT_ROWS: List[Dict[str, Any]] = []
 
@@ -26,10 +27,14 @@ def _msg(intent: str, payload: Dict[str, Any], extensions: Dict[str, Any] | None
 def _source_hashes() -> Dict[str, str]:
     repo = Path(__file__).resolve().parents[2]
     tracked = [
+        repo / "braindrive_runtime" / "config.py",
         repo / "braindrive_runtime" / "nodes" / "model_openrouter.py",
         repo / "braindrive_runtime" / "nodes" / "model_ollama.py",
+        repo / "braindrive_runtime" / "nodes" / "model_provider.py",
         repo / "braindrive_runtime" / "providers" / "openrouter.py",
         repo / "braindrive_runtime" / "providers" / "ollama.py",
+        repo / "braindrive_runtime" / "providers" / "resolver.py",
+        repo / "braindrive_runtime" / "providers" / "registry.py",
         repo / "braindrive_runtime" / "nodes" / "scrapling.py",
     ]
     out: Dict[str, str] = {}
@@ -139,6 +144,126 @@ def test_tool_backend_swap_is_config_only(runtime) -> None:
     assert _source_hashes() == before
 
     _record("tool_backend_swap", "Scrapling backend changed without core runtime source edits")
+
+
+def test_provider_c_extension_is_config_only(tmp_path) -> None:
+    before = _source_hashes()
+
+    plugin_dir = tmp_path / "provider-plugin"
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "synthetic_provider.py").write_text(
+        "\n".join(
+            [
+                "from __future__ import annotations",
+                "",
+                "from braindrive_runtime.providers.base import ProviderAdapter, ProviderCatalogResult, ProviderChatResult",
+                "",
+                "class SyntheticAdapter(ProviderAdapter):",
+                "    provider_name = 'synthetic'",
+                "",
+                "    def __init__(self, response_prefix: str = 'synthetic') -> None:",
+                "        self.response_prefix = response_prefix",
+                "",
+                "    def validate_catalog(self, parent_message_id):",
+                "        return None",
+                "",
+                "    def validate(self, request):",
+                "        return None",
+                "",
+                "    def chat_completion(self, request):",
+                "        text = f\"{self.response_prefix}:{request.model}:{request.prompt}\"",
+                "        return ProviderChatResult(text=text), None",
+                "",
+                "    def catalog(self, parent_message_id):",
+                "        return ProviderCatalogResult(models=['synthetic/default'], fallback=False)",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    registry_dir = tmp_path / "provider-registry"
+    registry_dir.mkdir(parents=True, exist_ok=True)
+    (registry_dir / "synthetic.json").write_text(
+        json.dumps(
+            {
+                "provider": "synthetic",
+                "adapter_factory": "synthetic_provider:SyntheticAdapter",
+                "adapter_kwargs": {
+                    "response_prefix": {
+                        "env": "BRAINDRIVE_SYNTHETIC_RESPONSE_PREFIX",
+                        "default": "synthetic"
+                    }
+                },
+                "model_node": {
+                    "node_id": "node.model.synthetic",
+                    "priority": 150,
+                    "label": "Synthetic"
+                },
+                "config": {
+                    "base_url_env": "",
+                    "base_url_default": "",
+                    "base_url_required": False,
+                    "default_model_env": "BRAINDRIVE_SYNTHETIC_DEFAULT_MODEL",
+                    "required_env": [],
+                    "required_env_messages": {},
+                    "startup_notice": "synthetic provider adapter"
+                }
+            },
+            ensure_ascii=True,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    user_config = tmp_path / "user-config.yaml"
+    user_config.write_text(
+        "\n".join(
+            [
+                "llm:",
+                "  default_provider: synthetic",
+                "  synthetic:",
+                "    default_model: synthetic/default",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    import sys
+
+    added_path = False
+    if str(plugin_dir) not in sys.path:
+        sys.path.insert(0, str(plugin_dir))
+        added_path = True
+    try:
+        runtime = BrainDriveRuntime(
+            library_root=tmp_path / "library",
+            data_root=tmp_path / "runtime-data",
+            user_config_path=user_config,
+            env={
+                "BRAINDRIVE_PROVIDER_REGISTRY_DIR": str(registry_dir),
+                "BRAINDRIVE_SYNTHETIC_RESPONSE_PREFIX": "fixture",
+                "BRAINDRIVE_DEFAULT_PROVIDER": "synthetic",
+                "BRAINDRIVE_OPENROUTER_API_KEY": "test-key",
+                "BRAINDRIVE_OPENROUTER_DEFAULT_MODEL": "anthropic/claude-sonnet-4",
+                "BRAINDRIVE_OLLAMA_BASE_URL": "http://localhost:11434/v1",
+                "BRAINDRIVE_OLLAMA_DEFAULT_MODEL": "llama3:8b",
+            },
+        )
+        runtime.bootstrap()
+
+        response = runtime.route(_msg("model.chat.complete", {"prompt": "provider c check"}))
+        assert response["intent"] == "model.chat.completed"
+        assert response["payload"]["provider"] == "synthetic"
+        assert response["payload"]["model"] == "synthetic/default"
+        assert response["payload"]["text"] == "fixture:synthetic/default:provider c check"
+        assert _source_hashes() == before
+    finally:
+        if added_path:
+            sys.path.remove(str(plugin_dir))
+
+    _record("provider_extension", "Synthetic provider added via adapter+config fixture only")
 
 
 def test_zzz_write_conformance_report_artifact(tmp_path) -> None:

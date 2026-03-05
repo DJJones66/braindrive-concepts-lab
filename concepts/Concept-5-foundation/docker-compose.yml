@@ -11,7 +11,7 @@ services:
     environment:
       PYTHONPATH: /workspace
       ROUTER_PORT: "8080"
-      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-braindrive-mvp-dev-token}"
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-}"
       ROUTER_NODE_TIMEOUT_SEC: "${ROUTER_NODE_TIMEOUT_SEC:-180}"
       BRAINDRIVE_LIBRARY_ROOT: /workspace/data/library
       BRAINDRIVE_RUNTIME_DIR: /workspace/data/runtime/router
@@ -28,7 +28,7 @@ services:
       - ./data/runtime:/workspace/data/runtime
       - ./data/library:/workspace/data/library:ro
     ports:
-      - "${BRAINDRIVE_ROUTER_PORT:-9480}:8080"
+      - "${NETWORK_BIND_ADDR:-127.0.0.1}:${BRAINDRIVE_ROUTER_PORT:-9480}:8080"
 
   intent-router-natural-language:
     build:
@@ -50,7 +50,7 @@ services:
       - ./data/runtime:/workspace/data/runtime
       - ./data/library:/workspace/data/library
     ports:
-      - "${BRAINDRIVE_INTENT_PORT:-9481}:8081"
+      - "${NETWORK_BIND_ADDR:-127.0.0.1}:${BRAINDRIVE_INTENT_PORT:-9481}:8081"
     depends_on:
       - node-router
 
@@ -68,7 +68,7 @@ services:
       GATEWAY_ROUTER_BASE_URL: http://node-router:8080
       GATEWAY_HTTP_TIMEOUT_SEC: "${GATEWAY_HTTP_TIMEOUT_SEC:-240}"
       GATEWAY_AUTH_REQUIRED: "${GATEWAY_AUTH_REQUIRED:-true}"
-      GATEWAY_ENFORCE_SESSION: "${GATEWAY_ENFORCE_SESSION:-false}"
+      GATEWAY_ENFORCE_SESSION: "${GATEWAY_ENFORCE_SESSION:-true}"
       GATEWAY_SESSION_TTL_SEC: "${GATEWAY_SESSION_TTL_SEC:-43200}"
       GATEWAY_REFRESH_TTL_SEC: "${GATEWAY_REFRESH_TTL_SEC:-604800}"
       GATEWAY_AUTH_SALT: "${GATEWAY_AUTH_SALT:-braindrive-gateway-salt}"
@@ -78,7 +78,7 @@ services:
       - ./data/runtime:/workspace/data/runtime
       - ./data/library:/workspace/data/library
     ports:
-      - "${BRAINDRIVE_GATEWAY_PORT:-9482}:8090"
+      - "${NETWORK_BIND_ADDR:-127.0.0.1}:${BRAINDRIVE_GATEWAY_PORT:-9482}:8090"
     depends_on:
       - intent-router-natural-language
 
@@ -91,6 +91,17 @@ services:
     command: ["/workspace/scripts/tty_webterm_entry.sh"]
     environment:
       PYTHONPATH: /workspace
+      NETWORK_BIND_ADDR: "${NETWORK_BIND_ADDR:-127.0.0.1}"
+      BRAINDRIVE_DEFAULT_PROVIDER: "${BRAINDRIVE_DEFAULT_PROVIDER:-openrouter}"
+      BRAINDRIVE_OPENROUTER_API_KEY: "${BRAINDRIVE_OPENROUTER_API_KEY:-}"
+      BRAINDRIVE_OPENROUTER_BASE_URL: "${BRAINDRIVE_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
+      BRAINDRIVE_OPENROUTER_DEFAULT_MODEL: "${BRAINDRIVE_OPENROUTER_DEFAULT_MODEL:-}"
+      BRAINDRIVE_OPENROUTER_SITE_URL: "${BRAINDRIVE_OPENROUTER_SITE_URL:-}"
+      BRAINDRIVE_OPENROUTER_APP_NAME: "${BRAINDRIVE_OPENROUTER_APP_NAME:-BrainDrive-MVP}"
+      BRAINDRIVE_OLLAMA_BASE_URL: "${BRAINDRIVE_OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}"
+      BRAINDRIVE_OLLAMA_API_KEY: "${BRAINDRIVE_OLLAMA_API_KEY:-}"
+      BRAINDRIVE_OLLAMA_DEFAULT_MODEL: "${BRAINDRIVE_OLLAMA_DEFAULT_MODEL:-llama3:8b}"
+      BRAINDRIVE_MODEL_TIMEOUT_SEC: "${BRAINDRIVE_MODEL_TIMEOUT_SEC:-180}"
       BRAINDRIVE_GATEWAY_BASE: "http://gateway:8090"
       BRAINDRIVE_ROUTER_BASE: "http://node-router:8080"
       BRAINDRIVE_INTENT_BASE: "http://intent-router-natural-language:8081"
@@ -104,7 +115,7 @@ services:
       BRAINDRIVE_CLI_STREAM_DIAGNOSTICS: "${BRAINDRIVE_CLI_STREAM_DIAGNOSTICS:-false}"
       TTY_WEBTERM_AUTH_ENABLED: "${TTY_WEBTERM_AUTH_ENABLED:-false}"
       TTY_WEBTERM_AUTH_USER: "${TTY_WEBTERM_AUTH_USER:-dev}"
-      TTY_WEBTERM_AUTH_PASSWORD: "${TTY_WEBTERM_AUTH_PASSWORD:-change-me-now}"
+      TTY_WEBTERM_AUTH_PASSWORD: "${TTY_WEBTERM_AUTH_PASSWORD:-}"
       TTY_WEBTERM_LOG_LEVEL: "${TTY_WEBTERM_LOG_LEVEL:-2}"
       TTY_WEBTERM_PORT_INTERNAL: "7681"
       TTY_WEBTERM_THEME_BACKGROUND: "${TTY_WEBTERM_THEME_BACKGROUND:-#000000}"
@@ -112,7 +123,7 @@ services:
       - ./data/runtime/tty-webterm:/workspace/data/runtime
       - ./data/library:/workspace/data/library
     ports:
-      - "${BRAINDRIVE_WEBCONSOLE_PORT:-9493}:7681"
+      - "${NETWORK_BIND_ADDR:-127.0.0.1}:${BRAINDRIVE_WEBCONSOLE_PORT:-9493}:7681"
     depends_on:
       - gateway
       - node-router
@@ -130,7 +141,7 @@ services:
       NODE_KIND: runtime_bootstrap
       NODE_PORT: "8120"
       NODE_ENDPOINT_URL: http://node-runtime-bootstrap:8120/bdp
-      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-braindrive-mvp-dev-token}"
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-}"
       ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
@@ -154,7 +165,7 @@ services:
       NODE_KIND: memory_fs
       NODE_PORT: "8121"
       NODE_ENDPOINT_URL: http://node-memory-fs:8121/bdp
-      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-braindrive-mvp-dev-token}"
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-}"
       ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
@@ -178,7 +189,7 @@ services:
       NODE_KIND: session_state
       NODE_PORT: "8124"
       NODE_ENDPOINT_URL: http://node-session-state:8124/bdp
-      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-braindrive-mvp-dev-token}"
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-}"
       ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
@@ -202,7 +213,7 @@ services:
       NODE_KIND: folder
       NODE_PORT: "8122"
       NODE_ENDPOINT_URL: http://node-workflow-folder:8122/bdp
-      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-braindrive-mvp-dev-token}"
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-}"
       ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
@@ -226,7 +237,7 @@ services:
       NODE_KIND: skill
       NODE_PORT: "8123"
       NODE_ENDPOINT_URL: http://node-workflow-skill:8123/bdp
-      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-braindrive-mvp-dev-token}"
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-}"
       ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
@@ -254,7 +265,7 @@ services:
       NODE_KIND: approval_gate
       NODE_PORT: "8126"
       NODE_ENDPOINT_URL: http://node-approval-gate:8126/bdp
-      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-braindrive-mvp-dev-token}"
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-}"
       ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
@@ -278,7 +289,7 @@ services:
       NODE_KIND: git_ops
       NODE_PORT: "8127"
       NODE_ENDPOINT_URL: http://node-git-ops:8127/bdp
-      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-braindrive-mvp-dev-token}"
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-}"
       ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
@@ -302,7 +313,7 @@ services:
       NODE_KIND: model_openrouter
       NODE_PORT: "8128"
       NODE_ENDPOINT_URL: http://node-model-openrouter:8128/bdp
-      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-braindrive-mvp-dev-token}"
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-}"
       ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
@@ -332,7 +343,7 @@ services:
       NODE_KIND: model_ollama
       NODE_PORT: "8129"
       NODE_ENDPOINT_URL: http://node-model-ollama:8129/bdp
-      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-braindrive-mvp-dev-token}"
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-}"
       ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
@@ -360,7 +371,7 @@ services:
       NODE_KIND: chat_general
       NODE_PORT: "8130"
       NODE_ENDPOINT_URL: http://node-chat-general:8130/bdp
-      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-braindrive-mvp-dev-token}"
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-}"
       ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
@@ -384,7 +395,7 @@ services:
       NODE_KIND: scrapling
       NODE_PORT: "8132"
       NODE_ENDPOINT_URL: http://node-web-scrapling:8132/bdp
-      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-braindrive-mvp-dev-token}"
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-}"
       ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
@@ -419,7 +430,7 @@ services:
       NODE_KIND: web_console
       NODE_PORT: "8133"
       NODE_ENDPOINT_URL: http://node-web-console:8133/bdp
-      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-braindrive-mvp-dev-token}"
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-}"
       ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"
@@ -432,7 +443,11 @@ services:
       WEBTERM_MAX_CONCURRENT_SESSIONS_PER_USER: "${WEBTERM_MAX_CONCURRENT_SESSIONS_PER_USER:-2}"
       WEBTERM_MAX_MESSAGE_BYTES: "${WEBTERM_MAX_MESSAGE_BYTES:-4096}"
       WEBTERM_MAX_EVENTS_PER_MINUTE: "${WEBTERM_MAX_EVENTS_PER_MINUTE:-120}"
-      WEBTERM_TARGETS: "${WEBTERM_TARGETS:-node-router,node-memory-fs,node-session-state,node-workflow-folder,node-workflow-skill,node-chat-general}"
+      WEBTERM_TARGETS: "${WEBTERM_TARGETS:-node-router,node-memory-fs,node-workflow-folder,node-workflow-skill,node-chat-general}"
+      WEBTERM_TARGETS_DENYLIST: "${WEBTERM_TARGETS_DENYLIST:-}"
+      WEBTERM_TARGET_DISCOVERY_ENABLED: "${WEBTERM_TARGET_DISCOVERY_ENABLED:-true}"
+      WEBTERM_TARGET_DISCOVERY_TTL_SEC: "${WEBTERM_TARGET_DISCOVERY_TTL_SEC:-15}"
+      WEBTERM_TARGET_DISCOVERY_TIMEOUT_SEC: "${WEBTERM_TARGET_DISCOVERY_TIMEOUT_SEC:-1.5}"
       WEBTERM_SSH_GATEWAY_HOST: "${WEBTERM_SSH_GATEWAY_HOST:-ssh-gateway}"
       WEBTERM_SSH_GATEWAY_PORT: "${WEBTERM_SSH_GATEWAY_PORT:-2226}"
       WEBTERM_SSH_TARGET_DEFAULT: "${WEBTERM_SSH_TARGET_DEFAULT:-node-router}"
@@ -449,6 +464,7 @@ services:
       WEBTERM_GATEWAY_BASE_URL: "${WEBTERM_GATEWAY_BASE_URL:-http://gateway:8090}"
       WEBTERM_INTENT_ROUTER_BASE_URL: "${WEBTERM_INTENT_ROUTER_BASE_URL:-http://intent-router-natural-language:8081}"
       WEBTERM_ROUTER_BASE_URL: "${WEBTERM_ROUTER_BASE_URL:-http://node-router:8080}"
+      WEBTERM_REQUIRE_EXPLICIT_BASE_URLS: "${WEBTERM_REQUIRE_EXPLICIT_BASE_URLS:-false}"
       WEBTERM_HTTP_TIMEOUT_SEC: "${WEBTERM_HTTP_TIMEOUT_SEC:-60}"
     volumes:
       - ./data/runtime:/workspace/data/runtime
@@ -467,6 +483,17 @@ services:
     command: ["/workspace/scripts/dev_webterm_entry.sh"]
     environment:
       PYTHONPATH: /workspace
+      NETWORK_BIND_ADDR: "${NETWORK_BIND_ADDR:-127.0.0.1}"
+      BRAINDRIVE_DEFAULT_PROVIDER: "${BRAINDRIVE_DEFAULT_PROVIDER:-openrouter}"
+      BRAINDRIVE_OPENROUTER_API_KEY: "${BRAINDRIVE_OPENROUTER_API_KEY:-}"
+      BRAINDRIVE_OPENROUTER_BASE_URL: "${BRAINDRIVE_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
+      BRAINDRIVE_OPENROUTER_DEFAULT_MODEL: "${BRAINDRIVE_OPENROUTER_DEFAULT_MODEL:-}"
+      BRAINDRIVE_OPENROUTER_SITE_URL: "${BRAINDRIVE_OPENROUTER_SITE_URL:-}"
+      BRAINDRIVE_OPENROUTER_APP_NAME: "${BRAINDRIVE_OPENROUTER_APP_NAME:-BrainDrive-MVP}"
+      BRAINDRIVE_OLLAMA_BASE_URL: "${BRAINDRIVE_OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}"
+      BRAINDRIVE_OLLAMA_API_KEY: "${BRAINDRIVE_OLLAMA_API_KEY:-}"
+      BRAINDRIVE_OLLAMA_DEFAULT_MODEL: "${BRAINDRIVE_OLLAMA_DEFAULT_MODEL:-llama3:8b}"
+      BRAINDRIVE_MODEL_TIMEOUT_SEC: "${BRAINDRIVE_MODEL_TIMEOUT_SEC:-180}"
       BRAINDRIVE_ROUTER_BASE: "http://node-router:8080"
       BRAINDRIVE_INTENT_BASE: "http://intent-router-natural-language:8081"
       BRAINDRIVE_GATEWAY_BASE: "http://gateway:8090"
@@ -479,14 +506,14 @@ services:
       BRAINDRIVE_CLI_STREAM_FALLBACK_ONLY: "${BRAINDRIVE_CLI_STREAM_FALLBACK_ONLY:-true}"
       BRAINDRIVE_CLI_STREAM_DIAGNOSTICS: "${BRAINDRIVE_CLI_STREAM_DIAGNOSTICS:-false}"
       DEV_WEBTERM_AUTH_USER: "${DEV_WEBTERM_AUTH_USER:-dev}"
-      DEV_WEBTERM_AUTH_PASSWORD: "${DEV_WEBTERM_AUTH_PASSWORD:-change-me-now}"
+      DEV_WEBTERM_AUTH_PASSWORD: "${DEV_WEBTERM_AUTH_PASSWORD:-}"
       DEV_WEBTERM_LOG_LEVEL: "${DEV_WEBTERM_LOG_LEVEL:-2}"
       DEV_WEBTERM_PORT_INTERNAL: "7681"
     volumes:
       - ./data/runtime/dev-webterm:/workspace/data/runtime
       - ./data/library:/workspace/data/library
     ports:
-      - "${BRAINDRIVE_DEV_WEBTERM_BIND_ADDR:-0.0.0.0}:${BRAINDRIVE_DEV_WEBTERM_PORT:-9494}:7681"
+      - "${NETWORK_BIND_ADDR:-127.0.0.1}:${BRAINDRIVE_DEV_WEBTERM_PORT:-9494}:7681"
     depends_on:
       - node-router
       - intent-router-natural-language
@@ -503,7 +530,7 @@ services:
       NODE_KIND: audit_log
       NODE_PORT: "8131"
       NODE_ENDPOINT_URL: http://node-audit-log:8131/bdp
-      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-braindrive-mvp-dev-token}"
+      ROUTER_REGISTRATION_TOKEN: "${ROUTER_REGISTRATION_TOKEN:-}"
       ROUTER_REGISTER_URL: http://node-router:8080/router/node/register
       ROUTER_HEARTBEAT_URL: http://node-router:8080/router/node/heartbeat
       ROUTER_DIRECT_ROUTE_TIMEOUT_SEC: "${ROUTER_DIRECT_ROUTE_TIMEOUT_SEC:-180}"

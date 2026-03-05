@@ -3,12 +3,17 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from ..protocol import make_error, make_response, new_uuid
+from ..workflow_conventions import load_workflow_conventions
 from .base import ProtocolNode, cap
 
 
 class ChatGeneralNode(ProtocolNode):
     node_id = "interface.cli"
     priority = 100
+
+    def __init__(self, ctx) -> None:
+        super().__init__(ctx)
+        self._workflow = load_workflow_conventions(self.ctx.library_root, self.ctx.persistence)
 
     def capabilities(self) -> List:
         return [
@@ -74,7 +79,7 @@ class ChatGeneralNode(ProtocolNode):
         if not active_folder:
             return ""
         if self.ctx.route_message is not None:
-            response = self._route("memory.read", {"path": f"{active_folder}/plan.md"})
+            response = self._route("memory.read", {"path": f"{active_folder}/{self._workflow.plan_path}"})
             if response.get("intent") == "memory.read.result":
                 payload = response.get("payload", {})
                 if isinstance(payload, dict):
@@ -117,7 +122,7 @@ class ChatGeneralNode(ProtocolNode):
                         {
                             "text": "Next steps from your plan:",
                             "next_steps": next_steps,
-                            "source": f"{active_folder}/plan.md",
+                            "source": f"{active_folder}/{self._workflow.plan_path}",
                         },
                         message.get("message_id"),
                     )

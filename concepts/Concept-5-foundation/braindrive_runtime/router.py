@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .config import ConfigResolver
 from .constants import (
-    E_BAD_MESSAGE,
     E_CONFIRMATION_REQUIRED,
     E_INTERNAL,
     E_NO_ROUTE,
@@ -15,7 +14,6 @@ from .constants import (
     E_NODE_UNAVAILABLE,
     E_REQUIRED_EXTENSION_MISSING,
     E_UNSUPPORTED_PROTOCOL,
-    MODEL_PROVIDERS,
     PROTOCOL_VERSION,
 )
 from .metadata import NodeDescriptor, parse_version
@@ -109,52 +107,69 @@ class RouterCore:
             )
         return None
 
-    def _filter_for_provider(
+    @staticmethod
+    def _llm_extension(message: Dict[str, Any]) -> Dict[str, Any]:
+        extensions = message.get("extensions", {})
+        if not isinstance(extensions, dict):
+            return {}
+        llm = extensions.get("llm", {})
+        return llm if isinstance(llm, dict) else {}
+
+    def _provider_selector(
         self,
         nodes: List[NodeRecord],
         intent: str,
         message: Dict[str, Any],
-    ) -> Tuple[List[NodeRecord], Optional[Dict[str, Any]], Optional[Dict[str, str]]]:
-        if not intent.startswith("model."):
-            return nodes, None, None
+    ) -> Tuple[str, str]:
+        llm_ext = self._llm_extension(message)
+        explicit_provider = str(llm_ext.get("provider", "")).strip()
+        if explicit_provider:
+            return explicit_provider, "request"
 
-        extensions = message.get("extensions", {}) or {}
-        llm_ext = extensions.get("llm") if isinstance(extensions.get("llm"), dict) else {}
-        selection = self.config.select_llm(llm_ext)
+        providers = {
+            str(cap.provider).strip()
+            for rec in nodes
+            for cap in rec.descriptor.capabilities
+            if cap.name == intent and isinstance(cap.provider, str) and str(cap.provider).strip()
+        }
+        if len(providers) <= 1:
+            return "", ""
 
-        # Provider/model resolution must be explicit and validated for model intents.
-        if selection.provider not in MODEL_PROVIDERS:
-            return [], make_error(E_BAD_MESSAGE, "Invalid model provider", message.get("message_id")), None
-        if not selection.model:
-            return [], make_error(E_BAD_MESSAGE, "Model is required for model intent", message.get("message_id")), None
+        default_provider, _ = self.config.default_provider()
+        return str(default_provider).strip(), "default"
 
-        requirement_error = self.config.validate_provider_requirements(selection)
-        if requirement_error:
-            return [], make_error(E_NODE_UNAVAILABLE, requirement_error, message.get("message_id")), None
+    def _filter_for_provider_selector(
+        self,
+        nodes: List[NodeRecord],
+        intent: str,
+        message: Dict[str, Any],
+    ) -> Tuple[List[NodeRecord], Optional[Dict[str, Any]]]:
+        selector, selector_source = self._provider_selector(nodes, intent, message)
+        if not selector:
+            return nodes, None
 
         filtered: List[NodeRecord] = []
         for rec in nodes:
             cap = self._metadata_for(rec, intent)
             if cap is None:
                 continue
-            if cap.provider == selection.provider:
+            provider = str(cap.provider or "").strip()
+            if provider == selector:
                 filtered.append(rec)
 
-        if not filtered:
-            return [], make_error(
-                E_NODE_UNAVAILABLE,
-                "Model provider unavailable. Check provider status and config.",
-                message.get("message_id"),
-                details={"provider": selection.provider, "intent": intent},
-            ), None
+        if filtered:
+            return filtered, None
 
-        disclosure = {
-            "provider": selection.provider,
-            "model": selection.model,
-            "provider_source": selection.provider_source,
-            "model_source": selection.model_source,
-        }
-        return filtered, None, disclosure
+        return [], make_error(
+            E_NODE_UNAVAILABLE,
+            "No eligible nodes matched provider selector.",
+            message.get("message_id"),
+            details={
+                "intent": intent,
+                "provider": selector,
+                "provider_source": selector_source,
+            },
+        )
 
     def route(self, message: Dict[str, Any]) -> Dict[str, Any]:
         validation_error = validate_core(message)
@@ -200,8 +215,7 @@ class RouterCore:
         if approval_error:
             return approval_error
 
-        provider_disclosure: Optional[Dict[str, str]] = None
-        filtered, provider_error, provider_disclosure = self._filter_for_provider(eligible, intent, message)
+        filtered, provider_error = self._filter_for_provider_selector(eligible, intent, message)
         if provider_error:
             return provider_error
         eligible = filtered
@@ -213,13 +227,6 @@ class RouterCore:
         for rec in eligible:
             outbound = deepcopy(message)
             ensure_trace(outbound, parent_message_id=msg_id, hop="router.core")
-            if provider_disclosure:
-                out_ext = outbound.setdefault("extensions", {})
-                llm_ext = out_ext.setdefault("llm", {})
-                llm_ext["provider"] = provider_disclosure["provider"]
-                llm_ext["model"] = provider_disclosure["model"]
-                llm_ext["provider_source"] = provider_disclosure["provider_source"]
-                llm_ext["model_source"] = provider_disclosure["model_source"]
 
             self.persistence.emit_event(
                 "router",
