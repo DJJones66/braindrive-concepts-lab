@@ -72,6 +72,43 @@ def test_openrouter_adapter_chat_success_with_tool_calls(monkeypatch: pytest.Mon
     assert len(result.tool_calls) == 1
 
 
+def test_openrouter_adapter_forwards_messages_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = OpenRouterAdapter(
+        base_url="https://openrouter.ai/api/v1",
+        api_key="test-key",
+        site_url="",
+        app_name="BrainDrive-MVP",
+        timeout_sec="30",
+    )
+    captured: Dict[str, Any] = {}
+    messages = [
+        {"role": "system", "content": "You are helpful."},
+        {"role": "user", "content": "First"},
+        {"role": "assistant", "content": "Second"},
+        {"role": "user", "content": "Third"},
+    ]
+
+    def _ok(req, timeout=0):  # noqa: ANN001
+        if isinstance(req.data, (bytes, bytearray)):
+            captured.update(json.loads(req.data.decode("utf-8")))
+        return _FakeHttpResponse({"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr("braindrive_runtime.providers.openrouter.request.urlopen", _ok)
+    result, err = adapter.chat_completion(
+        ProviderChatRequest(
+            model="anthropic/claude-sonnet-4",
+            prompt="",
+            llm={},
+            parent_message_id="msg-1",
+            messages=messages,
+        )
+    )
+
+    assert err is None
+    assert result is not None
+    assert captured["messages"] == messages
+
+
 def test_openrouter_adapter_unauthorized_error(monkeypatch: pytest.MonkeyPatch) -> None:
     adapter = OpenRouterAdapter(
         base_url="https://openrouter.ai/api/v1",

@@ -25,7 +25,7 @@ def test_route_nl_message_propagates_trace_context(monkeypatch):
         "roles": ["operator"],
         "scopes": ["chat:write"],
         "trace_id": "trace-xyz",
-        "session_id": "sess-abc",
+        "auth_session_id": "sess-abc",
     }
 
     response = gateway._route_nl_message(
@@ -38,7 +38,7 @@ def test_route_nl_message_propagates_trace_context(monkeypatch):
     assert captured
     trace_ext = captured[0]["extensions"]["trace"]
     assert trace_ext["trace_id"] == "trace-xyz"
-    assert trace_ext["session_id"] == "sess-abc"
+    assert trace_ext["auth_session_id"] == "sess-abc"
     assert trace_ext["conversation_id"] == "conv-42"
 
 
@@ -57,7 +57,7 @@ def test_route_bdp_propagates_trace_context(monkeypatch):
         "roles": ["operator"],
         "scopes": ["chat:write"],
         "trace_id": "trace-bdp",
-        "session_id": "sess-bdp",
+        "auth_session_id": "sess-bdp",
     }
 
     result = gateway._route_bdp(
@@ -72,6 +72,6 @@ def test_route_bdp_propagates_trace_context(monkeypatch):
     trace_ext = captured[0]["extensions"]["trace"]
     assert trace_ext == {
         "trace_id": "trace-bdp",
-        "session_id": "sess-bdp",
+        "auth_session_id": "sess-bdp",
         "conversation_id": "conv-bdp",
     }

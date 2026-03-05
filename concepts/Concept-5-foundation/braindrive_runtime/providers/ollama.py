@@ -175,9 +175,12 @@ class OllamaAdapter(ProviderAdapter):
         return parsed, None
 
     def chat_completion(self, request_obj: ProviderChatRequest) -> tuple[ProviderChatResult | None, Dict[str, Any] | None]:
+        messages = request_obj.messages if isinstance(request_obj.messages, list) else []
+        if not messages:
+            messages = [{"role": "user", "content": request_obj.prompt}]
         body: Dict[str, Any] = {
             "model": request_obj.model,
-            "messages": [{"role": "user", "content": request_obj.prompt}],
+            "messages": messages,
             "stream": False,
         }
         apply_generation_options(body, request_obj.llm)

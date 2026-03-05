@@ -32,6 +32,7 @@ class CapabilityMetadata:
     side_effect_scope: str
     capability_version: str
     provider: Optional[str] = None
+    visibility: str = "public"
 
     def validate(self) -> Optional[str]:
         if not self.name.strip():
@@ -50,6 +51,8 @@ class CapabilityMetadata:
             return f"capability {self.name} invalid side_effect_scope"
         if self.provider is not None and self.provider not in MODEL_PROVIDERS:
             return f"capability {self.name} invalid provider"
+        if self.visibility not in {"public", "internal"}:
+            return f"capability {self.name} invalid visibility"
         return None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -65,6 +68,7 @@ class CapabilityMetadata:
             "side_effect_scope": self.side_effect_scope,
             "capability_version": self.capability_version,
             "provider": self.provider,
+            "visibility": self.visibility,
         }
 
     @classmethod
@@ -90,6 +94,7 @@ class CapabilityMetadata:
             side_effect_scope=str(payload.get("side_effect_scope", "")).strip(),
             capability_version=str(payload.get("capability_version", "")).strip(),
             provider=provider,
+            visibility=str(payload.get("visibility", "public")).strip() or "public",
         )
 
 

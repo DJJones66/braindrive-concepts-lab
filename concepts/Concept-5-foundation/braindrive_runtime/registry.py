@@ -168,6 +168,7 @@ class NodeRegistry:
                             "approval_required": cap.approval_required,
                             "provider": cap.provider,
                             "capability_version": cap.capability_version,
+                            "visibility": cap.visibility,
                         }
                     )
         return catalog

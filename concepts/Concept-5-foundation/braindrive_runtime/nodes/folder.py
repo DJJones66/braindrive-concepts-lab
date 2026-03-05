@@ -37,6 +37,17 @@ class FolderWorkflowNode(ProtocolNode):
                 side_effect_scope="none",
             ),
             cap(
+                name="folder.current.get",
+                description="Read current active folder context",
+                input_schema={"type": "object"},
+                risk_class="read",
+                required_extensions=[],
+                approval_required=False,
+                examples=["get active folder"],
+                idempotency="idempotent",
+                side_effect_scope="none",
+            ),
+            cap(
                 name="folder.list",
                 description="List available folders",
                 input_schema={"type": "object"},
@@ -79,7 +90,11 @@ class FolderWorkflowNode(ProtocolNode):
         return ""
 
     def _set_active_folder(self, folder: str) -> None:
-        self._route_session("session.active_folder.set", {"active_folder": folder})
+        self._route_session(
+            "session.active_folder.set",
+            {"active_folder": folder},
+            {"internal": {"source_node": self.node_id}},
+        )
 
     def _slug(self, text: str) -> str:
         slug = re.sub(r"[^a-zA-Z0-9\-_\s]", "", text.strip().lower())
@@ -116,6 +131,21 @@ class FolderWorkflowNode(ProtocolNode):
                 {
                     "folders": self._folders(),
                     "active_folder": self._active_folder(),
+                },
+                message.get("message_id"),
+            )
+
+        if intent == "folder.current.get":
+            active_folder = self._active_folder()
+            folder_dir = self.ctx.library_root / active_folder if active_folder else None
+            exists = bool(active_folder and folder_dir is not None and folder_dir.exists() and folder_dir.is_dir())
+            context_docs = self._load_context_docs(folder_dir) if exists and folder_dir is not None else {}
+            return make_response(
+                "folder.current",
+                {
+                    "active_folder": active_folder,
+                    "exists": exists,
+                    "context_docs": context_docs,
                 },
                 message.get("message_id"),
             )

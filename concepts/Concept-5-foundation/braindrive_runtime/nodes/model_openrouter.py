@@ -65,6 +65,24 @@ class OpenRouterModelNode(ProtocolNode):
             llm = {}
         return llm
 
+    @staticmethod
+    def _messages_from_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+        raw = payload.get("messages", [])
+        if not isinstance(raw, list):
+            return []
+        messages: List[Dict[str, Any]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role", "")).strip().lower()
+            content = item.get("content")
+            if role not in {"system", "user", "assistant"}:
+                continue
+            if not isinstance(content, str) or not content.strip():
+                continue
+            messages.append({"role": role, "content": content})
+        return messages
+
     def _catalog(self, parent_message_id: str | None) -> Dict[str, Any]:
         err = self.adapter.validate_catalog(parent_message_id)
         if err is not None:
@@ -99,14 +117,24 @@ class OpenRouterModelNode(ProtocolNode):
 
         if intent in {"model.chat.complete", "model.chat.stream"}:
             prompt = str(payload.get("prompt", "")).strip()
-            if not prompt:
+            messages = self._messages_from_payload(payload)
+            if not messages and prompt:
+                messages = [{"role": "user", "content": prompt}]
+            if not messages:
                 return make_error("E_BAD_MESSAGE", "prompt is required", message.get("message_id"))
+            if not prompt:
+                for item in reversed(messages):
+                    if str(item.get("role", "")).strip().lower() == "user":
+                        prompt = str(item.get("content", "")).strip()
+                        if prompt:
+                            break
 
             request_obj = ProviderChatRequest(
                 model=model,
                 prompt=prompt,
                 llm=llm,
                 parent_message_id=message.get("message_id"),
+                messages=messages,
             )
             err = self.adapter.validate(request_obj)
             if err is not None:

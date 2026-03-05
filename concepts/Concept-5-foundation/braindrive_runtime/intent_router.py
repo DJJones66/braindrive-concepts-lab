@@ -63,6 +63,10 @@ class IntentRouterNL:
         return self._clean_label(self._infer_topic(text))
 
     @staticmethod
+    def _normalize_folder_name(value: str) -> str:
+        return value.replace(" ", "-").lower()
+
+    @staticmethod
     def _active_folder_from_context(context: Optional[Dict[str, Any]]) -> str:
         if not isinstance(context, dict):
             return ""
@@ -145,6 +149,33 @@ class IntentRouterNL:
         if not folder:
             return False
         return self._interview_awaiting_answer_for_folder(folder)
+
+    @staticmethod
+    def _provider_history_messages(context: Optional[Dict[str, Any]]) -> list[Dict[str, str]]:
+        if not isinstance(context, dict):
+            return []
+        raw = context.get("provider_history_messages", [])
+        if not isinstance(raw, list):
+            return []
+        out: list[Dict[str, str]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role", "")).strip().lower()
+            content = item.get("content")
+            if role not in {"system", "user", "assistant"}:
+                continue
+            if not isinstance(content, str) or not content.strip():
+                continue
+            out.append({"role": role, "content": content})
+        return out
+
+    def _provider_messages_with_user_prompt(self, context: Optional[Dict[str, Any]], prompt: str) -> list[Dict[str, str]]:
+        history = self._provider_history_messages(context)
+        current_prompt = prompt.strip()
+        if not current_prompt:
+            return history
+        return [*history, {"role": "user", "content": current_prompt}]
 
     @staticmethod
     def _extract_urls(text: str) -> list[str]:
@@ -299,7 +330,7 @@ class IntentRouterNL:
                             "reason_codes": ["keyword_web_console_close_missing_session"],
                             "payload": {},
                             "clarification_required": True,
-                            "clarification_prompt": "Please include the web terminal session_id (for example sess_...).",
+                            "clarification_prompt": "Please include the web terminal console_session_id (for example sess_...).",
                         }
                     )
                 else:
@@ -308,7 +339,7 @@ class IntentRouterNL:
                             "canonical_intent": "web.console.session.close",
                             "confidence": 0.9,
                             "reason_codes": ["keyword_web_console_close"],
-                            "payload": {"session_id": session_match.group(1)},
+                            "payload": {"console_session_id": session_match.group(1)},
                         }
                     )
             else:
@@ -340,6 +371,35 @@ class IntentRouterNL:
                             "payload": payload,
                         }
                     )
+
+        elif re.search(r"\b(?:get|show|display)\s+(?:my\s+)?(?:current\s+)?active\s+folder\b", lower) or re.search(
+            r"\bwhat(?:'s| is)\s+(?:my\s+)?(?:current\s+)?active\s+folder\b", lower
+        ):
+            read_intent = "folder.current.get" if self._has_capability("folder.current.get") else "folder.list"
+            plan.update(
+                {
+                    "canonical_intent": read_intent,
+                    "confidence": 0.94,
+                    "reason_codes": ["keyword_active_folder_get"],
+                    "payload": {},
+                }
+            )
+
+        elif re.search(r"\bset\s+(?:current\s+)?active\s+folder\b", lower):
+            folder = self._infer_topic(cleaned)
+            match = re.search(r"\bset\s+(?:current\s+)?active\s+folder(?:\s+to)?\s+(.+)$", cleaned, flags=re.IGNORECASE)
+            if match:
+                candidate = self._clean_label(match.group(1))
+                if candidate:
+                    folder = candidate
+            plan.update(
+                {
+                    "canonical_intent": "folder.switch",
+                    "confidence": 0.93,
+                    "reason_codes": ["keyword_active_folder_set"],
+                    "payload": {"folder": self._normalize_folder_name(folder)},
+                }
+            )
 
         elif re.search(r"\blist(?:\s+\w+){0,3}\s+folders?\b", lower) or lower in {"folders", "list folder"}:
             plan.update(
@@ -560,6 +620,15 @@ class IntentRouterNL:
                     "payload": {"prompt": cleaned},
                 }
             )
+
+        if plan["canonical_intent"] in {"model.chat.complete", "model.chat.stream"}:
+            payload = plan.get("payload", {})
+            if isinstance(payload, dict):
+                prompt = str(payload.get("prompt", cleaned)).strip()
+                messages = self._provider_messages_with_user_prompt(context, prompt)
+                if messages:
+                    payload["messages"] = messages
+                    plan["payload"] = payload
 
         metadata = self._metadata_for(plan["canonical_intent"])
         if metadata:

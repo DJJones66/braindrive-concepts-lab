@@ -104,5 +104,5 @@ def test_extract_auth_context_uses_session_when_present(monkeypatch):
     assert auth_error is None
     assert extracted == session["token"]
     assert isinstance(auth_context, dict)
-    assert isinstance(auth_context.get("session_id"), str)
-    assert auth_context.get("session_id", "").strip()
+    assert isinstance(auth_context.get("auth_session_id"), str)
+    assert auth_context.get("auth_session_id", "").strip()

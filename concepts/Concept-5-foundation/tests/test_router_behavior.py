@@ -187,11 +187,86 @@ def test_unknown_prompt_defaults_to_model_chat(runtime):
     assert routed["route_response"]["intent"] == "model.chat.completed"
 
 
+def test_model_chat_payload_includes_provider_history_from_context(runtime):
+    analyzed = runtime.intent_router.analyze(
+        "Tell me what I should focus on this week",
+        context={
+            "provider_history_messages": [
+                {"role": "user", "content": "Earlier question"},
+                {"role": "assistant", "content": "Earlier answer"},
+            ]
+        },
+    )
+    assert analyzed["canonical_intent"] == "model.chat.complete"
+    assert analyzed["payload"]["messages"] == [
+        {"role": "user", "content": "Earlier question"},
+        {"role": "assistant", "content": "Earlier answer"},
+        {"role": "user", "content": "Tell me what I should focus on this week"},
+    ]
+
+
 def test_list_my_folders_routes_to_folder_list(runtime):
     routed = runtime.route_nl("can you list my folders")
     assert routed["status"] == "routed"
     assert routed["analysis"]["canonical_intent"] == "folder.list"
     assert routed["route_response"]["intent"] == "folder.listed"
+
+
+def test_get_active_folder_phrase_routes_to_folder_read(runtime):
+    routed = runtime.route_nl("get active folder")
+    assert routed["status"] == "routed"
+    assert routed["analysis"]["canonical_intent"] == "folder.current.get"
+    assert routed["analysis"]["reason_codes"] == ["keyword_active_folder_get"]
+    assert routed["route_response"]["intent"] == "folder.current"
+
+
+def test_set_active_folder_phrase_routes_to_folder_switch(runtime):
+    created = runtime.route_nl("create folder dimes", confirm=True)
+    assert created["status"] == "routed"
+    assert created["route_response"]["intent"] == "folder.created"
+
+    routed = runtime.route_nl("set active folder dimes")
+    assert routed["status"] == "routed"
+    assert routed["analysis"]["canonical_intent"] == "folder.switch"
+    assert routed["analysis"]["reason_codes"] == ["keyword_active_folder_set"]
+    assert routed["analysis"]["payload"]["folder"] == "dimes"
+    assert routed["route_response"]["intent"] == "folder.switched"
+
+
+def test_set_current_active_folder_phrase_routes_to_folder_switch(runtime):
+    created = runtime.route_nl("create folder dimes", confirm=True)
+    assert created["status"] == "routed"
+    assert created["route_response"]["intent"] == "folder.created"
+
+    routed = runtime.route_nl("set current active folder to dimes")
+    assert routed["status"] == "routed"
+    assert routed["analysis"]["canonical_intent"] == "folder.switch"
+    assert routed["analysis"]["payload"]["folder"] == "dimes"
+    assert routed["route_response"]["intent"] == "folder.switched"
+
+
+def test_set_active_folder_phrase_uses_same_validation_as_folder_switch(runtime):
+    routed = runtime.route_nl("set active folder missing-folder")
+    assert routed["status"] == "route_error"
+    assert routed["analysis"]["canonical_intent"] == "folder.switch"
+    assert routed["route_response"]["intent"] == "error"
+    assert routed["route_response"]["payload"]["error"]["code"] == "E_NODE_ERROR"
+
+
+def test_folder_current_get_returns_exists_and_context_docs(runtime, make_message):
+    created = runtime.route_nl("create folder dimes", confirm=True)
+    assert created["status"] == "routed"
+    assert created["route_response"]["intent"] == "folder.created"
+
+    switched = runtime.route_nl("switch folder to dimes")
+    assert switched["status"] == "routed"
+    assert switched["route_response"]["intent"] == "folder.switched"
+
+    current = runtime.route(make_message("folder.current.get", {}))
+    assert current["intent"] == "folder.current"
+    assert current["payload"]["active_folder"] == "dimes"
+    assert current["payload"]["exists"] is True
+    assert isinstance(current["payload"]["context_docs"], dict)
 
 
 def test_list_files_scopes_to_active_folder(runtime):

@@ -75,7 +75,7 @@ def test_route_nl_message_enqueues_stream_events(monkeypatch):
         "roles": ["operator"],
         "scopes": [],
         "trace_id": "trace-1",
-        "session_id": "",
+        "auth_session_id": "",
     }
     result = gateway._route_nl_message(
         {
@@ -114,7 +114,7 @@ def test_console_input_approval_event_is_queued(monkeypatch):
         return {
             "intent": "web.console.session.approval_required",
             "payload": {
-                "session_id": "sess_123",
+                "console_session_id": "sess_123",
                 "approval_request_id": "appr_1",
                 "command": "git commit -m 'x'",
             },
@@ -128,7 +128,7 @@ def test_console_input_approval_event_is_queued(monkeypatch):
         "roles": ["operator"],
         "scopes": [],
         "trace_id": "trace-1",
-        "session_id": "",
+        "auth_session_id": "",
     }
 
     result = gateway._handle_console_input(

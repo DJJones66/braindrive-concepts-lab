@@ -11,6 +11,7 @@ class ProviderChatRequest:
     prompt: str
     llm: Dict[str, Any]
     parent_message_id: str | None
+    messages: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass

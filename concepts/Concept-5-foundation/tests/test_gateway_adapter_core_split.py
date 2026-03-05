@@ -43,7 +43,7 @@ def test_adapter_builds_core_contract_request_envelope():
             "roles": ["operator"],
             "scopes": ["chat:write"],
             "trace_id": "trace-1",
-            "session_id": "sess-1",
+            "auth_session_id": "sess-1",
         },
         conversation_id="conv_demo",
         message="hello",
@@ -79,7 +79,7 @@ def test_core_message_contract_roundtrip_emits_canonical_events(monkeypatch):
         "roles": ["operator"],
         "scopes": ["chat:write"],
         "trace_id": "trace-a",
-        "session_id": "sess-a",
+        "auth_session_id": "sess-a",
     }
     request = gateway._core_contract_request(
         auth_context=auth_context,
@@ -114,4 +114,3 @@ def test_core_message_contract_roundtrip_emits_canonical_events(monkeypatch):
     assert "complete" in names
     for event in events:
         assert gateway_core.validate_stream_event_envelope(event) == []
-

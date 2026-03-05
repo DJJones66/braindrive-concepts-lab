@@ -61,6 +61,7 @@ def cap(
     side_effect_scope: str,
     capability_version: str = "0.1.0",
     provider: str | None = None,
+    visibility: str = "public",
 ) -> CapabilityMetadata:
     return CapabilityMetadata(
         name=name,
@@ -74,4 +75,5 @@ def cap(
         side_effect_scope=side_effect_scope,
         capability_version=capability_version,
         provider=provider,
+        visibility=visibility,
     )

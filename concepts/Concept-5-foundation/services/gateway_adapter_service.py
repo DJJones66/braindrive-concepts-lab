@@ -31,11 +31,17 @@ INTENT_ROUTER_BASE_URL = os.getenv("GATEWAY_INTENT_ROUTER_BASE_URL", "http://int
 ROUTER_BASE_URL = os.getenv("GATEWAY_ROUTER_BASE_URL", "http://node-router:8080").rstrip("/")
 DEFAULT_RUNTIME_DIR = PROJECT_ROOT / "data" / "runtime" / "gateway"
 RUNTIME_DIR = Path(os.getenv("BRAINDRIVE_RUNTIME_DIR", str(DEFAULT_RUNTIME_DIR)))
+DEFAULT_LIBRARY_ROOT = PROJECT_ROOT / "data" / "library"
+LIBRARY_ROOT = Path(os.getenv("BRAINDRIVE_LIBRARY_ROOT", str(DEFAULT_LIBRARY_ROOT)))
 HTTP_TIMEOUT_SEC = float(os.getenv("GATEWAY_HTTP_TIMEOUT_SEC", "70.0"))
 AUTH_REQUIRED = _env_bool("GATEWAY_AUTH_REQUIRED", True)
 ENFORCE_SESSION = _env_bool("GATEWAY_ENFORCE_SESSION", False)
 ENABLE_LEGACY_GATEWAY_ROUTES = _env_bool("GATEWAY_ENABLE_LEGACY_COMPAT_ROUTES", False)
 CORE_CONTRACT_STRICT = _env_bool("GATEWAY_CORE_CONTRACT_STRICT", False)
+PROVIDER_CONTEXT_ENABLED = _env_bool("GATEWAY_PROVIDER_CONTEXT_ENABLED", True)
+PROVIDER_CONTEXT_MAX_TURNS = int(os.getenv("GATEWAY_PROVIDER_CONTEXT_MAX_TURNS", "12"))
+PROVIDER_CONTEXT_MAX_CHARS = int(os.getenv("GATEWAY_PROVIDER_CONTEXT_MAX_CHARS", "12000"))
+CHAT_SIDECAR_ENABLED = _env_bool("GATEWAY_CHAT_SIDECAR_ENABLED", True)
 DEFAULT_ACTOR_TYPE = os.getenv("GATEWAY_DEFAULT_ACTOR_TYPE", "user").strip() or "user"
 SESSION_TTL_SEC = int(os.getenv("GATEWAY_SESSION_TTL_SEC", "43200"))
 REFRESH_TTL_SEC = int(os.getenv("GATEWAY_REFRESH_TTL_SEC", "604800"))
@@ -43,6 +49,7 @@ AUTH_SALT = os.getenv("GATEWAY_AUTH_SALT", "braindrive-gateway-salt")
 ALLOWED_API_KEYS = {item.strip() for item in os.getenv("GATEWAY_API_KEYS", "").split(",") if item.strip()}
 
 RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+LIBRARY_ROOT.mkdir(parents=True, exist_ok=True)
 PERSISTENCE = Persistence(RUNTIME_DIR)
 
 
@@ -186,7 +193,7 @@ def _build_auth_context_from_session(session: Dict[str, Any]) -> Dict[str, Any]:
         "roles": _normalize_roles(session.get("roles", [])),
         "scopes": _normalize_scopes(session.get("scopes", [])),
         "trace_id": str(new_uuid()),
-        "session_id": str(session.get("session_id", "")),
+        "auth_session_id": str(session.get("auth_session_id", "")),
     }
 
 
@@ -203,7 +210,7 @@ def _build_auth_context_from_identity(handler: BaseHTTPRequestHandler, body: Dic
         "roles": roles,
         "scopes": scopes,
         "trace_id": str(new_uuid()),
-        "session_id": "",
+        "auth_session_id": "",
     }
 
 
@@ -276,11 +283,11 @@ def _register_user(username: str, password: str, roles: List[str], scopes: List[
 def _create_session_for_user(user: Dict[str, Any]) -> Dict[str, Any]:
     token = f"tok_{new_uuid()}"
     refresh_token = f"rfr_{new_uuid()}"
-    session_id = f"sess_{new_uuid()}"
+    auth_session_id = f"sess_{new_uuid()}"
     now = int(time.time())
 
     session = {
-        "session_id": session_id,
+        "auth_session_id": auth_session_id,
         "token": token,
         "refresh_token": refresh_token,
         "user_id": str(user.get("user_id", "")),
@@ -452,6 +459,11 @@ def _route_nl_message(body: Dict[str, Any], auth_context: Dict[str, Any], *, con
         body=body,
         auth_context=auth_context,
         conversation_id=conversation_id,
+        library_root=str(LIBRARY_ROOT),
+        provider_context_enabled=PROVIDER_CONTEXT_ENABLED,
+        provider_context_max_turns=PROVIDER_CONTEXT_MAX_TURNS,
+        provider_context_max_chars=PROVIDER_CONTEXT_MAX_CHARS,
+        chat_sidecar_enabled=CHAT_SIDECAR_ENABLED,
         post_json=http_post_json,
     )
 
@@ -504,7 +516,7 @@ def _handle_console_close(body: Dict[str, Any], auth_context: Dict[str, Any], co
         conversation_id=conversation_id,
         body=body,
         context={
-            "console_session_id": str(body.get("console_session_id", body.get("session_id", ""))).strip(),
+            "console_session_id": str(body.get("console_session_id", "")).strip(),
             "reason": str(body.get("reason", "requested")).strip() or "requested",
         },
     )
@@ -530,7 +542,7 @@ def _handle_console_input(body: Dict[str, Any], auth_context: Dict[str, Any], co
         body=body,
         message=text,
         context={
-            "console_session_id": str(body.get("console_session_id", body.get("session_id", ""))).strip(),
+            "console_session_id": str(body.get("console_session_id", "")).strip(),
             "event": str(body.get("event", "terminal.input")).strip() or "terminal.input",
             "payload": event_payload,
         },
@@ -651,7 +663,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         response = {
             "ok": True,
             "session": {
-                "session_id": str(session["session"].get("session_id", "")),
+                "auth_session_id": str(session["session"].get("auth_session_id", "")),
                 "actor_id": str(session["session"].get("actor_id", "")),
                 "roles": session["session"].get("roles", []),
                 "scopes": session["session"].get("scopes", []),
@@ -740,6 +752,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
             request=request,
             intent_router_base_url=INTENT_ROUTER_BASE_URL,
             http_timeout_sec=HTTP_TIMEOUT_SEC,
+            library_root=str(LIBRARY_ROOT),
+            provider_context_enabled=PROVIDER_CONTEXT_ENABLED,
+            provider_context_max_turns=PROVIDER_CONTEXT_MAX_TURNS,
+            provider_context_max_chars=PROVIDER_CONTEXT_MAX_CHARS,
+            chat_sidecar_enabled=CHAT_SIDECAR_ENABLED,
             post_json=http_post_json,
             strict=CORE_CONTRACT_STRICT,
         )
@@ -758,7 +775,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         return (200 if result.get("ok") else 502), result
 
     def _conversation_for_console(self, body: Dict[str, Any]) -> str:
-        console_session_id = str(body.get("console_session_id", body.get("session_id", ""))).strip()
+        console_session_id = str(body.get("console_session_id", "")).strip()
         if console_session_id:
             value = gateway_core.conversation_id_for_console_session(STATE, console_session_id)
             if value:
@@ -779,7 +796,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "roles": roles,
             "scopes": [],
             "trace_id": str(new_uuid()),
-            "session_id": "",
+            "auth_session_id": "",
         }, None
 
     @staticmethod
@@ -958,6 +975,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 request=body,
                 intent_router_base_url=INTENT_ROUTER_BASE_URL,
                 http_timeout_sec=HTTP_TIMEOUT_SEC,
+                library_root=str(LIBRARY_ROOT),
+                provider_context_enabled=PROVIDER_CONTEXT_ENABLED,
+                provider_context_max_turns=PROVIDER_CONTEXT_MAX_TURNS,
+                provider_context_max_chars=PROVIDER_CONTEXT_MAX_CHARS,
+                chat_sidecar_enabled=CHAT_SIDECAR_ENABLED,
                 post_json=http_post_json,
                 strict=CORE_CONTRACT_STRICT,
             )
@@ -1044,7 +1066,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             assert auth_context is not None
             conversation_id = self._conversation_for_console(body)
             message_body = {
-                "console_session_id": str(body.get("session_id", "")).strip(),
+                "console_session_id": str(body.get("console_session_id", "")).strip(),
                 "text": str(body.get("text", "")).strip(),
                 "confirm": bool(body.get("confirm", False)),
                 "approval_request_id": str(body.get("approval_request_id", "")).strip(),

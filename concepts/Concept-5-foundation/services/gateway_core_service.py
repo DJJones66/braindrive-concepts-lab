@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from braindrive_runtime.protocol import http_post_json, new_uuid, now_iso
@@ -261,6 +263,104 @@ def route_text_preview(route_response: Dict[str, Any]) -> str:
     return ""
 
 
+def _safe_conversation_filename(conversation_id: str) -> str:
+    raw = str(conversation_id).strip()
+    safe = "".join(ch for ch in raw if ch.isalnum() or ch in {"-", "_"})
+    return safe or f"conv_{new_uuid()}"
+
+
+def _chat_paths(library_root: str, conversation_id: str) -> tuple[Path, Path]:
+    root = Path(library_root).resolve()
+    chats_dir = root / "chats"
+    chats_dir.mkdir(parents=True, exist_ok=True)
+    name = _safe_conversation_filename(conversation_id)
+    return chats_dir / f"{name}.jsonl", chats_dir / f"{name}.meta.json"
+
+
+def _append_chat_record(
+    *,
+    library_root: str,
+    conversation_id: str,
+    record: Dict[str, Any],
+    write_sidecar: bool,
+) -> None:
+    root = str(library_root).strip()
+    if not root:
+        return
+    jsonl_path, meta_path = _chat_paths(root, conversation_id)
+
+    with jsonl_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=True) + "\n")
+
+    if not write_sidecar:
+        return
+
+    sidecar: Dict[str, Any] = {}
+    if meta_path.exists():
+        try:
+            loaded = json.loads(meta_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                sidecar = loaded
+        except Exception:
+            sidecar = {}
+
+    sidecar["conversation_id"] = conversation_id
+    sidecar["record_count"] = int(sidecar.get("record_count", 0)) + 1
+    sidecar["updated_at"] = str(record.get("ts", now_iso()))
+    sidecar["last_record_id"] = str(record.get("record_id", ""))
+    meta_path.write_text(json.dumps(sidecar, ensure_ascii=True, indent=2), encoding="utf-8")
+
+
+def _load_provider_history_messages(
+    *,
+    library_root: str,
+    conversation_id: str,
+    max_turns: int,
+    max_chars: int,
+) -> List[Dict[str, str]]:
+    root = str(library_root).strip()
+    if not root:
+        return []
+    jsonl_path, _ = _chat_paths(root, conversation_id)
+    if not jsonl_path.exists():
+        return []
+
+    messages: List[Dict[str, str]] = []
+    try:
+        for line in jsonl_path.read_text(encoding="utf-8").splitlines():
+            item = json.loads(line)
+            if not isinstance(item, dict):
+                continue
+            input_obj = item.get("input", {})
+            output_obj = item.get("output", {})
+            user_text = str(input_obj.get("text", "")).strip() if isinstance(input_obj, dict) else ""
+            assistant_text = str(output_obj.get("text", "")).strip() if isinstance(output_obj, dict) else ""
+            if user_text:
+                messages.append({"role": "user", "content": user_text})
+            if assistant_text:
+                messages.append({"role": "assistant", "content": assistant_text})
+    except Exception:
+        return []
+
+    if max_turns > 0:
+        messages = messages[-(max_turns * 2) :]
+    if max_chars <= 0:
+        return messages
+
+    bounded: List[Dict[str, str]] = []
+    used = 0
+    for item in reversed(messages):
+        content = str(item.get("content", ""))
+        if not content:
+            continue
+        if used + len(content) > max_chars:
+            break
+        bounded.append(item)
+        used += len(content)
+    bounded.reverse()
+    return bounded
+
+
 def route_nl_message(
     *,
     state: Dict[str, Any],
@@ -271,6 +371,11 @@ def route_nl_message(
     body: Dict[str, Any],
     auth_context: Dict[str, Any],
     conversation_id: str,
+    library_root: str = "",
+    provider_context_enabled: bool = True,
+    provider_context_max_turns: int = 12,
+    provider_context_max_chars: int = 12000,
+    chat_sidecar_enabled: bool = True,
     post_json: HttpPostFn = http_post_json,
 ) -> Dict[str, Any]:
     message = str(body.get("message", "")).strip()
@@ -302,14 +407,25 @@ def route_nl_message(
     }
     extensions["trace"] = {
         "trace_id": str(auth_context.get("trace_id", "")),
-        "session_id": str(auth_context.get("session_id", "")),
+        "auth_session_id": str(auth_context.get("auth_session_id", "")),
         "conversation_id": conversation_id,
     }
+
+    request_context = dict(context)
+    if provider_context_enabled:
+        history_messages = _load_provider_history_messages(
+            library_root=library_root,
+            conversation_id=conversation_id,
+            max_turns=max(1, int(provider_context_max_turns)),
+            max_chars=max(1, int(provider_context_max_chars)),
+        )
+        if history_messages:
+            request_context["provider_history_messages"] = history_messages
 
     request_payload = {
         "message": message,
         "confirm": confirm,
-        "context": context,
+        "context": request_context,
         "extensions": extensions,
     }
 
@@ -389,6 +505,44 @@ def route_nl_message(
         payload=result,
     )
 
+    output_intent = str((result.get("route_response", {}) if isinstance(result.get("route_response", {}), dict) else {}).get("intent", ""))
+    output_text = route_text_preview(result.get("route_response", {}))
+    console_session_id = str(context.get("console_session_id", "")).strip()
+    if not console_session_id and isinstance(metadata, dict):
+        console_session_id = str(metadata.get("console_session_id", "")).strip()
+    chat_record = {
+        "ts": now_iso(),
+        "conversation_id": conversation_id,
+        "record_id": str(record.get("record_id", "")),
+        "actor": {
+            "id": str(auth_context.get("actor_id", "")),
+            "type": str(auth_context.get("actor_type", "user") or "user"),
+        },
+        "channel": str(metadata.get("channel", "") if isinstance(metadata, dict) else ""),
+        "route": {
+            "intent": str(record.get("route_intent", "")),
+            "status": str(record.get("status", "")),
+        },
+        "input": {"text": message},
+        "output": {"intent": output_intent, "text": output_text},
+        "metadata": metadata if isinstance(metadata, dict) else {},
+        "trace": {
+            "trace_id": str(auth_context.get("trace_id", "")),
+            "auth_session_id": str(auth_context.get("auth_session_id", "")),
+            "console_session_id": console_session_id,
+        },
+    }
+    try:
+        _append_chat_record(
+            library_root=library_root,
+            conversation_id=conversation_id,
+            record=chat_record,
+            write_sidecar=chat_sidecar_enabled,
+        )
+    except Exception:
+        # Keep routing non-fatal even when durable chat persistence cannot be written.
+        pass
+
     return result
 
 
@@ -413,7 +567,7 @@ def route_bdp(
         },
         "trace": {
             "trace_id": str(auth_context.get("trace_id", "")),
-            "session_id": str(auth_context.get("session_id", "")),
+            "auth_session_id": str(auth_context.get("auth_session_id", "")),
             "conversation_id": conversation_id,
         },
     }
@@ -471,7 +625,9 @@ def handle_console_open(
             "route_response": result,
         }
 
-    web_session_id = str((result.get("payload", {}) if isinstance(result.get("payload", {}), dict) else {}).get("session_id", "")).strip()
+    web_session_id = str(
+        (result.get("payload", {}) if isinstance(result.get("payload", {}), dict) else {}).get("console_session_id", "")
+    ).strip()
     if not web_session_id:
         return {
             "ok": False,
@@ -537,7 +693,7 @@ def handle_console_close(
     auth_context: Dict[str, Any],
     conversation_id: str,
 ) -> Dict[str, Any]:
-    console_session_id = str(body.get("console_session_id", body.get("session_id", ""))).strip()
+    console_session_id = str(body.get("console_session_id", "")).strip()
     if not console_session_id:
         return {
             "ok": False,
@@ -546,7 +702,7 @@ def handle_console_close(
         }
 
     payload = {
-        "session_id": console_session_id,
+        "console_session_id": console_session_id,
         "reason": str(body.get("reason", "requested")).strip() or "requested",
     }
     result = route_bdp_fn(
@@ -589,7 +745,7 @@ def handle_console_input(
     auth_context: Dict[str, Any],
     conversation_id: str,
 ) -> Dict[str, Any]:
-    console_session_id = str(body.get("console_session_id", body.get("session_id", ""))).strip()
+    console_session_id = str(body.get("console_session_id", "")).strip()
     if not console_session_id:
         return {
             "ok": False,
@@ -606,7 +762,7 @@ def handle_console_input(
         event_payload = {"data": text}
 
     payload = {
-        "session_id": console_session_id,
+        "console_session_id": console_session_id,
         "event": event_name,
         "payload": event_payload,
     }
@@ -766,6 +922,11 @@ def core_v1_messages(
     request: Dict[str, Any],
     intent_router_base_url: str,
     http_timeout_sec: float,
+    library_root: str = "",
+    provider_context_enabled: bool = True,
+    provider_context_max_turns: int = 12,
+    provider_context_max_chars: int = 12000,
+    chat_sidecar_enabled: bool = True,
     post_json: HttpPostFn = http_post_json,
     strict: bool = False,
 ) -> Dict[str, Any]:
@@ -808,6 +969,11 @@ def core_v1_messages(
         body=body,
         auth_context=auth_context,
         conversation_id=conversation_id,
+        library_root=library_root,
+        provider_context_enabled=provider_context_enabled,
+        provider_context_max_turns=provider_context_max_turns,
+        provider_context_max_chars=provider_context_max_chars,
+        chat_sidecar_enabled=chat_sidecar_enabled,
         post_json=post_json,
     )
 
@@ -878,7 +1044,7 @@ def core_v1_console_close(
         "console_session_id": str(
             context.get(
                 "console_session_id",
-                request.get("console_session_id", request.get("session_id", "")),
+                request.get("console_session_id", ""),
             )
         ).strip(),
         "reason": str(context.get("reason", request.get("reason", "requested"))).strip() or "requested",
@@ -916,7 +1082,7 @@ def core_v1_console_input(
         "console_session_id": str(
             context.get(
                 "console_session_id",
-                request.get("console_session_id", request.get("session_id", "")),
+                request.get("console_session_id", ""),
             )
         ).strip(),
         "text": str(request.get("message", context.get("text", ""))).strip(),

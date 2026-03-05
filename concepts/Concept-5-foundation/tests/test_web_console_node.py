@@ -64,7 +64,7 @@ def _open(runtime: BrainDriveRuntime, actor_id: str = "user.demo") -> str:
         )
     )
     assert response["intent"] == "web.console.session.ready"
-    return str(response["payload"]["session_id"])
+    return str(response["payload"]["console_session_id"])
 
 
 def test_web_console_metadata_contract(runtime):
@@ -145,7 +145,7 @@ def test_web_console_open_prunes_expired_sessions(tmp_path: Path):
         )
     )
     assert reopened["intent"] == "web.console.session.ready"
-    assert str(reopened["payload"]["session_id"]) != first_session_id
+    assert str(reopened["payload"]["console_session_id"]) != first_session_id
 
 
 def test_web_console_slash_commands_toggle_raw_mode(tmp_path: Path):
@@ -156,7 +156,7 @@ def test_web_console_slash_commands_toggle_raw_mode(tmp_path: Path):
         _msg(
             "web.console.session.event",
             {
-                "session_id": session_id,
+                "console_session_id": session_id,
                 "event": "terminal.input",
                 "payload": {"data": "/raw on"},
             },
@@ -207,7 +207,7 @@ def test_web_console_plain_interview_answer_routes_without_context_flag(
         _msg(
             "web.console.session.event",
             {
-                "session_id": session_id,
+                "console_session_id": session_id,
                 "event": "terminal.input",
                 "payload": {"data": "switch folder to dimes"},
             },
@@ -220,7 +220,7 @@ def test_web_console_plain_interview_answer_routes_without_context_flag(
         _msg(
             "web.console.session.event",
             {
-                "session_id": session_id,
+                "console_session_id": session_id,
                 "event": "terminal.input",
                 "payload": {"data": "start interview"},
             },
@@ -234,7 +234,7 @@ def test_web_console_plain_interview_answer_routes_without_context_flag(
         _msg(
             "web.console.session.event",
             {
-                "session_id": session_id,
+                "console_session_id": session_id,
                 "event": "terminal.input",
                 "payload": {"data": answer_text},
             },
@@ -260,7 +260,7 @@ def test_web_console_mutation_requires_and_accepts_confirmation(tmp_path: Path):
         _msg(
             "web.console.session.event",
             {
-                "session_id": session_id,
+                "console_session_id": session_id,
                 "event": "terminal.input",
                 "payload": {"data": "git commit -m 'msg'"},
             },
@@ -274,7 +274,7 @@ def test_web_console_mutation_requires_and_accepts_confirmation(tmp_path: Path):
         _msg(
             "web.console.session.event",
             {
-                "session_id": session_id,
+                "console_session_id": session_id,
                 "event": "terminal.input",
                 "payload": {"data": "git commit -m 'msg'"},
             },
@@ -313,7 +313,7 @@ def test_web_console_intent_fallback_is_opt_in(tmp_path: Path, monkeypatch: pyte
         _msg(
             "web.console.session.event",
             {
-                "session_id": session_id,
+                "console_session_id": session_id,
                 "event": "terminal.input",
                 "payload": {"data": "tell me a joke"},
             },
@@ -335,7 +335,7 @@ def test_web_console_session_expiration(tmp_path: Path):
     expired = runtime.route(
         _msg(
             "web.console.session.event",
-            {"session_id": session_id, "event": "session.ping", "payload": {}},
+            {"console_session_id": session_id, "event": "session.ping", "payload": {}},
             _identity(),
         )
     )

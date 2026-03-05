@@ -106,7 +106,7 @@ class WebConsoleNode(ProtocolNode):
             cap(
                 name="web.console.session.close",
                 description="Close web terminal session",
-                input_schema={"type": "object", "required": ["session_id"]},
+                input_schema={"type": "object", "required": ["console_session_id"]},
                 risk_class="read",
                 required_extensions=["identity"],
                 approval_required=False,
@@ -139,7 +139,7 @@ class WebConsoleNode(ProtocolNode):
             cap(
                 name="web.console.session.event",
                 description="Process browser terminal event envelope",
-                input_schema={"type": "object", "required": ["session_id", "event"]},
+                input_schema={"type": "object", "required": ["console_session_id", "event"]},
                 risk_class="read",
                 required_extensions=["identity"],
                 approval_required=False,
@@ -293,7 +293,7 @@ class WebConsoleNode(ProtocolNode):
             {
                 "timestamp": now_iso(),
                 "trace_id": str(session.get("trace_id", "")),
-                "session_id": str(session.get("session_id", "")),
+                "console_session_id": str(session.get("console_session_id", "")),
                 "actor_id": str(session.get("actor_id", "")),
                 "source_ip": str(session.get("source_ip", "")),
                 "origin": str(session.get("origin", "")),
@@ -318,7 +318,7 @@ class WebConsoleNode(ProtocolNode):
             {
                 "timestamp": now_iso(),
                 "trace_id": str(session.get("trace_id", "")),
-                "session_id": str(session.get("session_id", "")),
+                "console_session_id": str(session.get("console_session_id", "")),
                 "seq": seq,
                 "event": event,
                 "classification": classification,
@@ -327,13 +327,13 @@ class WebConsoleNode(ProtocolNode):
             },
         )
 
-    def _log_security(self, *, session_id: str, actor_id: str, origin: str, event: str, reason: str) -> None:
+    def _log_security(self, *, console_session_id: str, actor_id: str, origin: str, event: str, reason: str) -> None:
         self.ctx.persistence.append_log(
             "webterm_security",
             {
                 "timestamp": now_iso(),
                 "trace_id": str(new_uuid()),
-                "session_id": session_id,
+                "console_session_id": console_session_id,
                 "actor_id": actor_id,
                 "source_ip": "",
                 "origin": origin,
@@ -484,7 +484,7 @@ class WebConsoleNode(ProtocolNode):
         return make_response(
             "web.console.session.events",
             {
-                "session_id": str(session.get("session_id", "")),
+                "console_session_id": str(session.get("console_session_id", "")),
                 "seq": seq,
                 "events": events,
                 "prompt": self._prompt_for(session),
@@ -502,7 +502,7 @@ class WebConsoleNode(ProtocolNode):
                     "message_id": new_uuid(),
                     "intent": self.ssh_exec_intent,
                     "payload": {
-                        "session_id": str(session.get("session_id", "")),
+                        "console_session_id": str(session.get("console_session_id", "")),
                         "target": str(session.get("target", "")),
                         "command": command,
                     },
@@ -622,7 +622,7 @@ class WebConsoleNode(ProtocolNode):
                     "context": context,
                     "metadata": {
                         "channel": "web_console",
-                        "session_id": str(session.get("session_id", "")),
+                        "console_session_id": str(session.get("console_session_id", "")),
                         "target": str(session.get("target", "")),
                     },
                     "extensions": {
@@ -824,7 +824,7 @@ class WebConsoleNode(ProtocolNode):
                 return make_response(
                     "web.console.session.approval_required",
                     {
-                        "session_id": str(session.get("session_id", "")),
+                        "console_session_id": str(session.get("console_session_id", "")),
                         "command": command,
                         "classification": classification,
                         "approval_request_id": approval_request_id,
@@ -862,7 +862,13 @@ class WebConsoleNode(ProtocolNode):
         if not origin:
             return make_error("E_BAD_MESSAGE", "origin is required", message.get("message_id"))
         if not self._is_origin_allowed(origin):
-            self._log_security(session_id="", actor_id=actor_id, origin=origin, event="origin.denied", reason="origin_not_allowed")
+            self._log_security(
+                console_session_id="",
+                actor_id=actor_id,
+                origin=origin,
+                event="origin.denied",
+                reason="origin_not_allowed",
+            )
             return make_error("E_WEBTERM_ORIGIN_DENIED", "Origin denied", message.get("message_id"))
 
         if self._open_sessions_for(actor_id) >= self.max_sessions_per_user:
@@ -875,7 +881,7 @@ class WebConsoleNode(ProtocolNode):
         now_epoch = time.time()
         session_id = f"sess_{new_uuid()}"
         session = {
-            "session_id": session_id,
+            "console_session_id": session_id,
             "trace_id": str(new_uuid()),
             "actor_id": actor_id,
             "roles": roles,
@@ -900,7 +906,7 @@ class WebConsoleNode(ProtocolNode):
         return make_response(
             "web.console.session.ready",
             {
-                "session_id": session_id,
+                "console_session_id": session_id,
                 "target": target,
                 "idle_timeout_sec": self.idle_timeout_sec,
                 "max_timeout_sec": self.max_timeout_sec,
@@ -915,9 +921,9 @@ class WebConsoleNode(ProtocolNode):
     def _handle_session_close(self, message: Dict[str, Any]) -> Dict[str, Any]:
         payload = self._raw_payload(message)
         actor_id, _ = self._actor_from_identity(message)
-        session_id = str(payload.get("session_id", "")).strip()
+        session_id = str(payload.get("console_session_id", "")).strip()
         if not session_id:
-            return make_error("E_BAD_MESSAGE", "session_id is required", message.get("message_id"))
+            return make_error("E_BAD_MESSAGE", "console_session_id is required", message.get("message_id"))
         session = self._get_session(session_id)
         if session is None:
             return make_error("E_WEBTERM_SESSION_EXPIRED", "Session not found", message.get("message_id"))
@@ -925,16 +931,16 @@ class WebConsoleNode(ProtocolNode):
             return make_error("E_WEBTERM_POLICY_DENIED", "Session actor mismatch", message.get("message_id"))
         self._delete_session(session_id)
         self._log_session(session=session, event="session.closed", reason=str(payload.get("reason", "requested")))
-        return make_response("web.console.session.closed", {"session_id": session_id}, message.get("message_id"))
+        return make_response("web.console.session.closed", {"console_session_id": session_id}, message.get("message_id"))
 
     def _handle_session_event(self, message: Dict[str, Any]) -> Dict[str, Any]:
         payload = self._raw_payload(message)
         actor_id, _ = self._actor_from_identity(message)
-        session_id = str(payload.get("session_id", "")).strip()
+        session_id = str(payload.get("console_session_id", "")).strip()
         event_name = str(payload.get("event", "")).strip()
 
         if not session_id:
-            return make_error("E_BAD_MESSAGE", "session_id is required", message.get("message_id"))
+            return make_error("E_BAD_MESSAGE", "console_session_id is required", message.get("message_id"))
         if not event_name:
             return make_error("E_BAD_MESSAGE", "event is required", message.get("message_id"))
 
@@ -961,7 +967,7 @@ class WebConsoleNode(ProtocolNode):
         if event_name == "session.ping":
             return self._session_events_response(
                 session=session,
-                events=[{"event": "session.ready", "payload": {"session_id": session_id, "pong": True}}],
+                events=[{"event": "session.ready", "payload": {"console_session_id": session_id, "pong": True}}],
                 parent_message_id=message.get("message_id"),
             )
 
@@ -981,7 +987,7 @@ class WebConsoleNode(ProtocolNode):
                 {
                     "message_id": message.get("message_id"),
                     "extensions": message.get("extensions", {}),
-                    "payload": {"session_id": session_id, "reason": "client_close"},
+                    "payload": {"console_session_id": session_id, "reason": "client_close"},
                 }
             )
 

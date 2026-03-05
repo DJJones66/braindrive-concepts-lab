@@ -501,6 +501,19 @@ class CliClient:
             out.append(item)
         return out
 
+    @staticmethod
+    def _is_internal_visibility(visibility: Any) -> bool:
+        return str(visibility).strip().lower() == "internal"
+
+    @classmethod
+    def _is_user_facing_discovery_capability(cls, capability: str, visibility: Any = "") -> bool:
+        if cls._is_internal_visibility(visibility):
+            return False
+        # Fallback until all capabilities carry explicit visibility metadata.
+        if capability.startswith("session.") and str(visibility).strip() == "":
+            return False
+        return True
+
     def _load_prompt_specs(self) -> Dict[str, Dict[str, Any]]:
         specs: Dict[str, Dict[str, Any]] = {}
         try:
@@ -514,6 +527,8 @@ class CliClient:
                         continue
                     name = capability.get("name")
                     if not isinstance(name, str) or not name.strip():
+                        continue
+                    if not self._is_user_facing_discovery_capability(name, capability.get("visibility", "")):
                         continue
                     spec = specs.setdefault(name, {"examples": [], "descriptions": [], "required_fields": []})
 
@@ -540,9 +555,22 @@ class CliClient:
         if not specs:
             # Fallback: still provide capability names if registry details are unavailable.
             catalog = self.router_catalog()
-            for capability in catalog.keys():
-                if isinstance(capability, str) and capability.strip():
-                    specs[capability] = {"examples": [], "descriptions": [], "required_fields": []}
+            for capability, entries in catalog.items():
+                if not isinstance(capability, str) or not capability.strip():
+                    continue
+                visibility = ""
+                if isinstance(entries, list):
+                    for item in entries:
+                        if not isinstance(item, dict):
+                            continue
+                        if self._is_internal_visibility(item.get("visibility", "")):
+                            visibility = "internal"
+                            break
+                        if not visibility and str(item.get("visibility", "")).strip():
+                            visibility = str(item.get("visibility", "")).strip()
+                if not self._is_user_facing_discovery_capability(capability, visibility):
+                    continue
+                specs[capability] = {"examples": [], "descriptions": [], "required_fields": []}
 
         normalized: Dict[str, Dict[str, Any]] = {}
         for capability in sorted(specs.keys()):
@@ -703,6 +731,29 @@ class CliClient:
             return " ".join(words)
         return ""
 
+    @classmethod
+    def _capability_usage_hint(cls, capability: str, details: Dict[str, Any]) -> str:
+        examples = details.get("examples", [])
+        if not isinstance(examples, list):
+            examples = []
+        required = details.get("required_fields", [])
+        placeholders = [f"<{value}>" for value in required if isinstance(value, str) and value.strip()]
+
+        for example in examples:
+            if not isinstance(example, str):
+                continue
+            trimmed = example.strip()
+            if not trimmed:
+                continue
+            usage = cls._usage_from_example(trimmed, placeholders)
+            if usage:
+                return usage
+            return trimmed
+
+        if placeholders:
+            return f"{capability} {' '.join(placeholders)}"
+        return capability
+
     def handle_commands_search(self, command_arg: str = "") -> None:
         query = command_arg.strip().lower()
         if not query:
@@ -768,10 +819,19 @@ class CliClient:
                 elif placeholders:
                     self._print_system(f"  required values: {', '.join(placeholders)}")
 
-        if capability_matches and not prompt_matches:
-            self._print_system(f"[commands] matching capabilities for '{query}':")
-            for capability in capability_matches:
-                self._print_system(f"- {capability}")
+        prompt_capabilities = {str(item.get("capability", "")).strip() for item in prompt_matches}
+        additional_capabilities = [item for item in capability_matches if item not in prompt_capabilities]
+        if additional_capabilities:
+            label = (
+                f"[commands] additional matching capabilities for '{query}':"
+                if prompt_matches
+                else f"[commands] matching capabilities for '{query}':"
+            )
+            self._print_system(label)
+            for capability in additional_capabilities:
+                details = specs.get(capability, {})
+                usage_hint = self._capability_usage_hint(capability, details)
+                self._print_system(f"- {usage_hint}")
 
     @staticmethod
     def _model_timeout_sec() -> float:
