@@ -110,7 +110,7 @@ services:
       TTY_WEBTERM_THEME_BACKGROUND: "${TTY_WEBTERM_THEME_BACKGROUND:-#000000}"
     volumes:
       - ./data/runtime/tty-webterm:/workspace/data/runtime
-      - ./data/library:/workspace/data/library:ro
+      - ./data/library:/workspace/data/library
     ports:
       - "${BRAINDRIVE_WEBCONSOLE_PORT:-9493}:7681"
     depends_on:
@@ -484,7 +484,7 @@ services:
       DEV_WEBTERM_PORT_INTERNAL: "7681"
     volumes:
       - ./data/runtime/dev-webterm:/workspace/data/runtime
-      - ./data/library:/workspace/data/library:ro
+      - ./data/library:/workspace/data/library
     ports:
       - "${BRAINDRIVE_DEV_WEBTERM_BIND_ADDR:-0.0.0.0}:${BRAINDRIVE_DEV_WEBTERM_PORT:-9494}:7681"
     depends_on:

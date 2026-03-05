@@ -1294,9 +1294,11 @@ class CliClient:
                         output_text=streamed_text,
                         complete=bool(stream_result.get("complete", False)),
                     )
-                except Exception:
+                except Exception as exc:
                     # Keep streaming UX non-fatal even if chat persistence fails.
-                    pass
+                    self._print_system(
+                        f"[warn] chat log persistence failed for {self.conversation_id}: {exc}"
+                    )
             return True
         return False
 
@@ -1484,6 +1486,7 @@ class CliClient:
 
         self.refresh_active_folder()
         self._print_system("[startup] ready")
+        self._print_system(f"[conversation id] {self._ensure_conversation_id()}")
 
     def run_approval_flow(self, approval_payload: Dict[str, Any]) -> None:
         if not isinstance(approval_payload, dict):
